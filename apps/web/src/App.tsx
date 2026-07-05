@@ -32,6 +32,7 @@ import type {
   RewardsAppState,
   RuntimeLogRecord,
 } from '../../../packages/shared/src';
+import { defensiveQuoteOffset } from '../../../packages/shared/src';
 import { api, DASHBOARD_REFRESH_MS } from './lib/api';
 
 type LoadState =
@@ -501,7 +502,7 @@ function RiskControls({ state }: { state: RewardsAppState }) {
     ['Execution mode', state.execution?.mode || state.runtime.executionMode, state.execution?.mode === 'live' ? 'good' : 'neutral'],
     ['Global notional cap', formatUsd(config.maxGlobalNotional), 'neutral'],
     ['Per-market notional cap', formatUsd(config.maxMarketNotional), 'neutral'],
-    ['Quote offset', config.quoteOffset.toFixed(3), 'neutral'],
+    ['Quote placement', 'defensive', 'neutral'],
     ['Drift offset ratio', config.driftOffsetRatio.toFixed(2), 'neutral'],
     ['Min daily reward', formatUsd(config.minDailyReward), 'neutral'],
     ['Min time to close', `${Math.round(config.minSecondsToClose / 3600)}h`, 'neutral'],
@@ -694,7 +695,7 @@ function tagTone(tag: string): Tone {
 
 function quoteEconomics(market: RewardMarketCandidate, config: RewardsRuntimeConfig) {
   if (market.adjustedMidpoint == null) return null;
-  const offset = Math.max(config.quoteOffset, (market.marketSpread ?? 0) / 2);
+  const offset = defensiveQuoteOffset({ marketSpread: market.marketSpread, maxSpread: market.maxSpread });
   const yesPrice = roundPrice(market.adjustedMidpoint - offset);
   const noPrice = roundPrice(1 - market.adjustedMidpoint - offset);
   if (yesPrice <= 0.01 || yesPrice >= 0.99 || noPrice <= 0.01 || noPrice >= 0.99) return null;

@@ -4,7 +4,6 @@ export const rewardsRuntimeConfigSchema = z.object({
   enabled: z.boolean(),
   scannerLimit: z.number().int().positive(),
   candidateLimit: z.number().int().positive(),
-  quoteOffset: z.number().nonnegative(),
   minDailyReward: z.number().nonnegative(),
   minSecondsToClose: z.number().int().nonnegative(),
   maxGlobalNotional: z.number().positive(),

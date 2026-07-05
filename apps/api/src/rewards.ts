@@ -1,4 +1,4 @@
-import type { RewardMarketCandidate, RewardOrderbookSummary, RewardQuotePlan, RewardsDashboardState, RewardRiskTag } from '../../../packages/shared/src';
+import { defensiveQuoteOffset, type RewardMarketCandidate, type RewardOrderbookSummary, type RewardQuotePlan, type RewardsDashboardState, type RewardRiskTag } from '../../../packages/shared/src';
 import type { RewardsAppConfig } from './rewardsConfig';
 
 type RawMarket = Record<string, unknown>;
@@ -188,7 +188,7 @@ function planQuotes(appConfig: RewardsAppConfig, candidates: RewardMarketCandida
     const no = market.tokens.find((token) => token.label === 'NO');
     if (!yes || !no) continue;
     const size = market.minSize;
-    const offset = Math.max(appConfig.rewards.quoteOffset, (market.marketSpread ?? 0) / 2);
+    const offset = defensiveQuoteOffset({ marketSpread: market.marketSpread, maxSpread: market.maxSpread });
     const yesPrice = roundPrice(market.adjustedMidpoint - offset);
     const noPrice = roundPrice(1 - market.adjustedMidpoint - offset);
     const marketPlans = [
@@ -366,15 +366,19 @@ function isActionableCandidate(candidate: RewardMarketCandidate): boolean {
 
 function previewRewardQuote(appConfig: RewardsAppConfig, midpoint: number | null, marketSpread: number | null, maxSpread: number, shares: number): { yesPrice: number; noPrice: number; notional: number; eligible: boolean } | null {
   if (midpoint == null) return null;
-  const offset = Math.max(appConfig.rewards.quoteOffset, (marketSpread ?? 0) / 2);
+  const offset = defensiveQuoteOffset({ marketSpread, maxSpread });
   const yesPrice = roundPrice(midpoint - offset);
   const noPrice = roundPrice(1 - midpoint - offset);
   return {
     yesPrice,
     noPrice,
-    notional: roundMoney(shares * (yesPrice + noPrice)),
+    notional: roundMoney(shares * (boundedQuotePrice(yesPrice) + boundedQuotePrice(noPrice))),
     eligible: yesPrice > 0.01 && yesPrice < 0.99 && noPrice > 0.01 && noPrice < 0.99 && offset <= Math.max(maxSpread, 0),
   };
+}
+
+function boundedQuotePrice(value: number): number {
+  return Math.min(Math.max(value, 0.01), 0.99);
 }
 
 function adjustedMidpointFromBooks(yes?: RewardOrderbookSummary, no?: RewardOrderbookSummary): number | null {

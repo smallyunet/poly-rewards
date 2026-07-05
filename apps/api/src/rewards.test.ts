@@ -53,6 +53,8 @@ test('rewards scanner ranks an eligible market and plans two-sided buy quotes', 
     assert.deepEqual(state.candidates[0].rejectReasons, []);
     assert.equal(state.quotePlans.length, 2);
     assert.deepEqual(state.quotePlans.map((plan) => plan.label).sort(), ['NO', 'YES']);
+    assert.deepEqual([...new Set(state.quotePlans.map((plan) => plan.offset))], [0.043]);
+    assert.deepEqual([...new Set(state.quotePlans.map((plan) => plan.price))], [0.457]);
     assert.equal(state.totals.plannedOrders, 2);
   } finally {
     globalThis.fetch = originalFetch;
@@ -207,7 +209,7 @@ test('low-probability reward markets surface quote price and capital blockers', 
       'reward-sized quote is outside price or incentive-spread limits',
       'minimum reward-sized quote exceeds per-market notional cap',
     ]);
-    assert.equal(state.candidates[0].estimatedRequiredCapital, 19.2);
+    assert.equal(state.candidates[0].estimatedRequiredCapital, 18.84);
   } finally {
     globalThis.fetch = originalFetch;
     process.env = originalEnv;

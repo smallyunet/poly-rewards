@@ -31,12 +31,17 @@ The worker runs every `BOT_TICK_MS` and produces a rewards dashboard snapshot:
 
 ## Strategy Direction
 
-The intended first strategy is conservative rewards market making:
+The intended first strategy is defensive rewards market making:
 
 ```text
-BUY YES at adjusted_midpoint - offset
-BUY NO  at 1 - adjusted_midpoint - offset
+offset  = max(current_market_spread / 2, max_incentive_spread * 0.85)
+BUY YES = adjusted_midpoint - offset
+BUY NO  = 1 - adjusted_midpoint - offset
 ```
+
+For a market that allows `+-4c`, the default target is about `3.4c` away from
+midpoint, staying reward-eligible while reducing the chance of being picked off
+near the live market price.
 
 The scanner favors markets with visible daily rewards, lower competition, wider
 incentive spread, clear rules, enough time before resolution, and a reward
@@ -75,7 +80,6 @@ Rewards scanner and quote planner:
 REWARDS_ENABLED=true
 REWARDS_SCANNER_LIMIT=80
 REWARDS_CANDIDATE_LIMIT=12
-REWARDS_QUOTE_OFFSET=0.015
 REWARDS_MIN_DAILY_REWARD=1
 REWARDS_MIN_SECONDS_TO_CLOSE=86400
 REWARDS_GLOBAL_MAX_NOTIONAL=100
@@ -103,7 +107,7 @@ REWARDS_BLOCKED_KEYWORDS=5m,15m,live,in-play,missile,strike,war,attack,breaking
 Order management is drift-first. Managed orders are not cancelled merely
 because they are 60 seconds old. They are cancelled when the current quote plan
 disappears, price drift exceeds `max(REWARDS_MAX_MIDPOINT_DRIFT,
-quoteOffset * REWARDS_DRIFT_OFFSET_RATIO)`, orderbook data is stale, or the
+plannedOffset * REWARDS_DRIFT_OFFSET_RATIO)`, orderbook data is stale, or the
 long hard-refresh age is reached.
 
 For markets with active quote plans or active managed orders, the worker

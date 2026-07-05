@@ -19,12 +19,17 @@ under `RUNTIME_STATE_PATH` for restart recovery.
 
 ## Strategy
 
-The first practical strategy is conservative two-sided rewards market making:
+The first practical strategy is defensive two-sided rewards market making:
 
 ```text
-BUY YES at adjusted_midpoint - offset
-BUY NO  at 1 - adjusted_midpoint - offset
+offset  = max(current_market_spread / 2, max_incentive_spread * 0.85)
+BUY YES = adjusted_midpoint - offset
+BUY NO  = 1 - adjusted_midpoint - offset
 ```
+
+For a market that allows `+-4c`, this places quotes roughly `3.4c` away from
+midpoint by default. The goal is to remain reward-eligible while reducing
+pickoff risk versus quoting near the live midpoint.
 
 The planner favors markets with:
 
