@@ -193,6 +193,31 @@ test('live execution does not cancel solely on soft order age before hard refres
   assert.equal(state.totals.cancelledThisTick, 0);
 });
 
+test('live execution cancel events include the cancellation reason', async () => {
+  const runtimeStatePath = tempStatePath();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+  });
+  const first = new RewardsExecutionService(config, fakeClient());
+  await first.reconcile(testSnapshot());
+
+  const snapshot = testSnapshot();
+  snapshot.quotePlans = [];
+  const second = new RewardsExecutionService(config, fakeClient({
+    openOrders: [
+      { id: 'order-YES', tokenId: 'yes-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} },
+      { id: 'order-NO', tokenId: 'no-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} },
+    ],
+  }));
+  const state = await second.reconcile(snapshot);
+
+  assert.equal(state.totals.cancelledThisTick, 2);
+  assert.match(state.recentEvents[0].message, /no longer has an eligible current quote plan/);
+});
+
 function testConfig(overrides: Partial<RewardsAppConfig> & { rewards?: Partial<RewardsAppConfig['rewards']> } = {}): RewardsAppConfig {
   const originalEnv = { ...process.env };
   process.env.REWARDS_BLOCKED_CATEGORIES = '';

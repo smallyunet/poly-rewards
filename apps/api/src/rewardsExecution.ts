@@ -22,6 +22,17 @@ type TickCounters = {
   fillsThisTick: number;
 };
 
+type CancelReason = {
+  message: string;
+  currentPrice?: number;
+  originalPrice: number;
+  priceDrift?: number;
+  maxMidpointDrift: number;
+  ageSeconds: number;
+  maxOrderHardAgeSeconds: number;
+  staleOrderbook: boolean;
+};
+
 const ACTIVE_ORDER_STATUSES = new Set(['', 'open', 'live', 'matched', 'partially_filled', 'posted']);
 const MAX_PERSISTED_RECORDS = 500;
 
@@ -90,6 +101,7 @@ export class RewardsExecutionService {
     const staleTokenIds = staleOrderbookTokenIds(snapshot, this.appConfig.rewards.maxOrderbookAgeSeconds);
     const openById = new Map(openOrders.map((order) => [order.id, order]));
     const cancelIds: string[] = [];
+    const cancelReasons = new Map<string, CancelReason>();
 
     for (const order of this.managedOrders.values()) {
       if (!isActiveManagedOrder(order)) continue;
@@ -98,13 +110,21 @@ export class RewardsExecutionService {
       const currentPlan = plansByToken.get(order.tokenId);
       const ageSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
       const priceDrift = currentPlan ? Math.abs(currentPlan.price - order.price) : Number.POSITIVE_INFINITY;
-      const shouldCancel =
-        !currentPlan ||
-        ageSeconds > this.appConfig.rewards.maxOrderHardAgeSeconds ||
-        priceDrift > this.appConfig.rewards.maxMidpointDrift ||
-        staleTokenIds.has(order.tokenId);
+      const staleOrderbook = staleTokenIds.has(order.tokenId);
+      const reason = cancelReasonForOrder({
+        currentPrice: currentPlan?.price,
+        originalPrice: order.price,
+        priceDrift,
+        maxMidpointDrift: this.appConfig.rewards.maxMidpointDrift,
+        ageSeconds,
+        maxOrderHardAgeSeconds: this.appConfig.rewards.maxOrderHardAgeSeconds,
+        staleOrderbook,
+      });
 
-      if (shouldCancel) cancelIds.push(order.orderId);
+      if (reason) {
+        cancelIds.push(order.orderId);
+        cancelReasons.set(order.orderId, reason);
+      }
     }
 
     if (!cancelIds.length) return;
@@ -113,11 +133,13 @@ export class RewardsExecutionService {
     for (const orderId of cancelIds) {
       const order = this.managedOrders.get(orderId);
       if (!order) continue;
+      const reason = cancelReasons.get(orderId);
       this.managedOrders.set(orderId, { ...order, status: 'cancelled', remainingSize: 0, updatedAt: now });
-      this.event('info', 'cancel', `Cancelled managed order ${shortId(orderId)} for refresh or risk control.`, {
+      this.event('info', 'cancel', `Cancelled managed order ${shortId(orderId)} because ${reason?.message || 'refresh or risk control required it'}.`, {
         orderId,
         marketId: order.marketId,
         tokenId: order.tokenId,
+        ...reason,
       });
     }
   }
@@ -393,6 +415,34 @@ function staleOrderbookTokenIds(snapshot: RewardsDashboardState, maxAgeSeconds: 
     }
   }
   return stale;
+}
+
+function cancelReasonForOrder(params: Omit<CancelReason, 'message'>): CancelReason | null {
+  if (params.currentPrice == null) {
+    return {
+      ...params,
+      message: 'this token no longer has an eligible current quote plan',
+    };
+  }
+  if (params.ageSeconds > params.maxOrderHardAgeSeconds) {
+    return {
+      ...params,
+      message: `order age ${Math.round(params.ageSeconds)}s exceeded hard refresh ${params.maxOrderHardAgeSeconds}s`,
+    };
+  }
+  if (params.priceDrift != null && params.priceDrift > params.maxMidpointDrift) {
+    return {
+      ...params,
+      message: `price drift ${params.priceDrift.toFixed(3)} exceeded max ${params.maxMidpointDrift.toFixed(3)} (${params.originalPrice.toFixed(3)} -> ${params.currentPrice.toFixed(3)})`,
+    };
+  }
+  if (params.staleOrderbook) {
+    return {
+      ...params,
+      message: 'orderbook is stale for this token',
+    };
+  }
+  return null;
 }
 
 function findComparableOpenOrder(plan: RewardQuotePlan, openOrders: OpenOrderSummary[]): OpenOrderSummary | undefined {
