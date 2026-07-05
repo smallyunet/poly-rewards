@@ -328,18 +328,16 @@ function MarketList({ candidates, config }: { candidates: RewardMarketCandidate[
               </div>
               <p>{market.category || market.slug || shortId(market.conditionId || market.id)}</p>
               <TagList tags={market.riskTags} />
-              {economics && economics.shortfallShares > 0 ? (
+              {economics ? (
                 <p className="fundingHint">
-                  Needs at least {formatShares(economics.minShares)} shares per side, estimated {formatUsd(economics.minTwoSidedCost)} total.
-                  Current quote size is short by {formatShares(economics.shortfallShares)} shares per side.
+                  Reward-sized plan uses {formatShares(economics.minShares)} shares per side, estimated {formatUsd(economics.minTwoSidedCost)} total.
                 </p>
               ) : null}
             </div>
             <div className="marketStats">
               <Stat label="Reward" value={formatUsd(market.dailyReward)} />
-              <Stat label="Min shares" value={formatShares(market.minSize)} tone={economics && economics.shortfallShares > 0 ? 'bad' : 'neutral'} />
-              <Stat label="Min capital" value={economics ? formatUsd(economics.minTwoSidedCost) : '-'} tone={economics && economics.shortfallShares > 0 ? 'warn' : 'neutral'} />
-              <Stat label="Current cost" value={economics ? formatUsd(economics.currentTwoSidedCost) : '-'} />
+              <Stat label="Order size" value={formatShares(market.minSize)} />
+              <Stat label="Min capital" value={economics ? formatUsd(economics.minTwoSidedCost) : '-'} />
               <Stat label="Max spread" value={formatCents(market.maxSpread)} />
               <Stat label="Mid" value={market.adjustedMidpoint == null ? '-' : market.adjustedMidpoint.toFixed(3)} />
               <Stat label="Net" value={market.netScore.toFixed(3)} tone={market.netScore > 0 ? 'good' : 'bad'} />
@@ -456,7 +454,6 @@ function RiskControls({ state }: { state: RewardsAppState }) {
     ['Execution mode', state.execution?.mode || state.runtime.executionMode, state.execution?.mode === 'live' ? 'good' : 'neutral'],
     ['Global notional cap', formatUsd(config.maxGlobalNotional), 'neutral'],
     ['Per-market notional cap', formatUsd(config.maxMarketNotional), 'neutral'],
-    ['Quote size', formatShares(config.quoteSize), 'neutral'],
     ['Quote offset', config.quoteOffset.toFixed(3), 'neutral'],
     ['Min daily reward', formatUsd(config.minDailyReward), 'neutral'],
     ['Min time to close', `${Math.round(config.minSecondsToClose / 3600)}h`, 'neutral'],
@@ -491,8 +488,8 @@ function RiskBreakdown({ state }: { state: RewardsAppState }) {
       <div className="riskNote">
         <BarChart3 size={18} />
         <p>
-          Minimum incentive size is now a hard filter. Markets whose reward min size exceeds the configured
-          quote size are rejected before quote planning and cannot reach live execution.
+          Minimum incentive size is now the order size. Each market is planned at its own reward min size,
+          then rejected only if capital, notional, spread, or risk controls cannot support it.
         </p>
       </div>
     </div>
@@ -652,9 +649,7 @@ function quoteEconomics(market: RewardMarketCandidate, config: RewardsRuntimeCon
     yesPrice,
     noPrice,
     minShares,
-    currentTwoSidedCost: roundMoney(config.quoteSize * pairCostPerShare),
     minTwoSidedCost: roundMoney(minShares * pairCostPerShare),
-    shortfallShares: Math.max(minShares - config.quoteSize, 0),
   };
 }
 

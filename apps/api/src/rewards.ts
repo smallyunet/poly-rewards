@@ -86,10 +86,11 @@ async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagn
   ]);
   const adjustedMidpoint = adjustedMidpointFromBooks(yesOrderbook, noOrderbook);
   const marketSpread = yesOrderbook?.spread ?? null;
-  const requiredShares = Math.max(minSize, appConfig.rewards.quoteSize);
-  const estimatedRequiredCapital = estimatedTwoSidedCapital(appConfig, adjustedMidpoint, marketSpread, requiredShares);
+  const estimatedRequiredCapital = estimatedTwoSidedCapital(appConfig, adjustedMidpoint, marketSpread, minSize);
   const riskTags = riskTagsFor(appConfig, { question, category, endDate, dailyReward, minSize, maxSpread, competitiveness, yesOrderbook, noOrderbook });
   const rejectReasons = rejectReasonsFor(appConfig, { active, closed, acceptingOrders, dailyReward, minSize, maxSpread, endDate, tokens, yesOrderbook, noOrderbook, question, category });
+  if (estimatedRequiredCapital > appConfig.rewards.maxMarketNotional) rejectReasons.push('minimum reward-sized quote exceeds per-market notional cap');
+  if (estimatedRequiredCapital > appConfig.rewards.maxGlobalNotional) rejectReasons.push('minimum reward-sized quote exceeds global notional cap');
   const rewardScore = dailyReward > 0 ? dailyReward / Math.max(estimatedRequiredCapital, 1) / Math.max(competitiveness ?? 1, 1) : 0;
   const riskScore = riskScoreFor(riskTags, rejectReasons);
   const netScore = rewardScore - riskScore;
@@ -183,7 +184,7 @@ function planQuotes(appConfig: RewardsAppConfig, candidates: RewardMarketCandida
     const yes = market.tokens.find((token) => token.label === 'YES');
     const no = market.tokens.find((token) => token.label === 'NO');
     if (!yes || !no) continue;
-    const size = appConfig.rewards.quoteSize;
+    const size = market.minSize;
     const offset = Math.max(appConfig.rewards.quoteOffset, (market.marketSpread ?? 0) / 2);
     const yesPrice = roundPrice(market.adjustedMidpoint - offset);
     const noPrice = roundPrice(1 - market.adjustedMidpoint - offset);
@@ -270,8 +271,8 @@ function riskTagsFor(appConfig: RewardsAppConfig, params: { question: string; ca
   if ((params.competitiveness ?? 0) >= 3) tags.push('high-competition');
   if (normalizeSpread(params.maxSpread) >= 0.045) tags.push('wide-incentive-spread');
   if (normalizeSpread(params.maxSpread) > 0 && normalizeSpread(params.maxSpread) <= 0.02) tags.push('tight-incentive-spread');
-  if (params.minSize > 0 && params.minSize <= appConfig.rewards.quoteSize) tags.push('low-min-size');
-  if (params.minSize > appConfig.rewards.quoteSize * 4) tags.push('high-min-size');
+  if (params.minSize > 0 && params.minSize <= 20) tags.push('low-min-size');
+  if (params.minSize >= 50) tags.push('high-min-size');
   if (secondsTo(params.endDate) != null && secondsTo(params.endDate)! < appConfig.rewards.minSecondsToClose) tags.push('near-resolution');
   const text = `${params.question} ${params.category || ''}`.toLowerCase();
   if (/live|in-play/.test(text) && /sport|game|match|cup|nba|nfl|mlb|nhl|soccer|football/.test(text)) tags.push('live-sports');
@@ -279,7 +280,7 @@ function riskTagsFor(appConfig: RewardsAppConfig, params: { question: string; ca
   if (/war|missile|strike|attack|breaking|explosion/.test(text)) tags.push('breaking-news');
   if (/ambiguous|committee|clarif|subject to|according to/.test(text)) tags.push('ambiguous-resolution');
   if (!params.yesOrderbook || !params.noOrderbook) tags.push('missing-orderbook');
-  if ((params.yesOrderbook?.bidDepth ?? 0) + (params.yesOrderbook?.askDepth ?? 0) + (params.noOrderbook?.bidDepth ?? 0) + (params.noOrderbook?.askDepth ?? 0) < appConfig.rewards.quoteSize * 4) tags.push('thin-book');
+  if ((params.yesOrderbook?.bidDepth ?? 0) + (params.yesOrderbook?.askDepth ?? 0) + (params.noOrderbook?.bidDepth ?? 0) + (params.noOrderbook?.askDepth ?? 0) < Math.max(params.minSize, 1) * 4) tags.push('thin-book');
   return tags.length ? tags : ['eligible'];
 }
 
@@ -289,7 +290,7 @@ function rejectReasonsFor(appConfig: RewardsAppConfig, params: { active: boolean
   if (params.closed) reasons.push('market is closed');
   if (!params.acceptingOrders) reasons.push('market is not accepting orders');
   if (params.dailyReward < appConfig.rewards.minDailyReward) reasons.push('daily reward is below threshold');
-  if (params.minSize > appConfig.rewards.quoteSize) reasons.push(`reward min size ${roundShares(params.minSize)} exceeds configured quote size ${roundShares(appConfig.rewards.quoteSize)}`);
+  if (params.minSize <= 0) reasons.push('missing reward min size');
   if (normalizeSpread(params.maxSpread) <= 0) reasons.push('missing max incentive spread');
   if (secondsTo(params.endDate) != null && secondsTo(params.endDate)! < appConfig.rewards.minSecondsToClose) reasons.push('market is too close to resolution');
   if (params.tokens.length < 2) reasons.push('missing YES/NO token ids');

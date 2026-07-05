@@ -511,7 +511,7 @@ h3 {
 .marketStats,
 .quoteNumbers {
   display: grid;
-  grid-template-columns: repeat(7, minmax(82px, 1fr));
+  grid-template-columns: repeat(6, minmax(82px, 1fr));
   gap: 8px;
 }
 

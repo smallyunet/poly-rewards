@@ -44,7 +44,6 @@ function loadRewardsRuntimeConfig(): RewardsRuntimeConfig {
     enabled: booleanEnv('REWARDS_ENABLED', true),
     scannerLimit: parsePositiveInteger(process.env.REWARDS_SCANNER_LIMIT, 80),
     candidateLimit: parsePositiveInteger(process.env.REWARDS_CANDIDATE_LIMIT, 12),
-    quoteSize: numberEnv('REWARDS_QUOTE_SIZE', 5),
     quoteOffset: numberEnv('REWARDS_QUOTE_OFFSET', 0.015),
     minDailyReward: numberEnv('REWARDS_MIN_DAILY_REWARD', 1),
     minSecondsToClose: parsePositiveInteger(process.env.REWARDS_MIN_SECONDS_TO_CLOSE, 24 * 60 * 60),

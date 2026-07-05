@@ -20,8 +20,9 @@ The worker runs every `BOT_TICK_MS` and produces a rewards dashboard snapshot:
 - In monitor mode, report the plans without posting.
 - In live mode, reconcile open orders, cancel stale managed orders, and post
   only quotes that pass collateral and inventory limits.
-- Size quotes from `REWARDS_QUOTE_SIZE`; markets are rejected unless the
-  configured quote size meets or exceeds Polymarket `min_incentive_size`.
+- Size quotes from each market's Polymarket `min_incentive_size`; markets are
+  rejected only when capital, notional, spread, or risk controls cannot support
+  the reward-sized plan.
 - Prefer affordable quote plans during live execution by trying lower-notional
   plans before higher-notional plans.
 - Persist managed orders, execution events, and inferred fill records under
@@ -39,11 +40,10 @@ BUY NO  at 1 - adjusted_midpoint - offset
 
 The scanner favors markets with visible daily rewards, lower competition, wider
 incentive spread, clear rules, enough time before resolution, and a reward
-minimum size that the configured quote size can satisfy. It rejects
-close-to-resolution markets, markets whose `min_incentive_size` exceeds
-`REWARDS_QUOTE_SIZE`, missing books, blocked categories, and keyword-risk
-markets such as short-duration crypto, live sports, and breaking-news style
-markets.
+minimum size that fits the configured capital caps. It rejects
+close-to-resolution markets, reward-sized plans that exceed notional caps,
+missing books, blocked categories, and keyword-risk markets such as
+short-duration crypto, live sports, and breaking-news style markets.
 
 ## Local Development
 
@@ -75,7 +75,6 @@ Rewards scanner and quote planner:
 REWARDS_ENABLED=true
 REWARDS_SCANNER_LIMIT=80
 REWARDS_CANDIDATE_LIMIT=12
-REWARDS_QUOTE_SIZE=5
 REWARDS_QUOTE_OFFSET=0.015
 REWARDS_MIN_DAILY_REWARD=1
 REWARDS_MIN_SECONDS_TO_CLOSE=86400

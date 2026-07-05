@@ -41,12 +41,12 @@ The planner rejects or penalizes:
 - Markets too close to resolution.
 - Blocked categories and keyword-risk markets.
 - Live sports, short-duration crypto, breaking-news, and ambiguous-resolution patterns.
-- Markets whose configured reward minimum size exceeds the quote size.
+- Reward-sized plans whose minimum required capital exceeds notional caps.
 
-Minimum incentive size is a hard order-size requirement. The planner rejects a
-market before quote generation when `min_incentive_size` is greater than
-`REWARDS_QUOTE_SIZE`, so live execution cannot post orders that are too small to
-qualify for rewards scoring.
+Minimum incentive size is the order-size source. The planner sizes each quote
+from the market's `min_incentive_size`, then rejects the market before quote
+generation only when the resulting reward-sized plan exceeds capital, notional,
+spread, or risk controls.
 
 ## Runtime Model
 

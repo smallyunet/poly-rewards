@@ -10,7 +10,6 @@ test('rewards scanner ranks an eligible market and plans two-sided buy quotes', 
   process.env.REWARDS_BLOCKED_CATEGORIES = '';
   process.env.REWARDS_BLOCKED_KEYWORDS = '';
   process.env.REWARDS_MIN_SECONDS_TO_CLOSE = '3600';
-  process.env.REWARDS_QUOTE_SIZE = '5';
   process.env.REWARDS_MARKET_MAX_NOTIONAL = '20';
   process.env.REWARDS_GLOBAL_MAX_NOTIONAL = '50';
 
@@ -51,7 +50,7 @@ test('rewards scanner ranks an eligible market and plans two-sided buy quotes', 
     const state = await runRewardsTick(loadRewardsAppConfig());
     assert.equal(state.status, 'enabled');
     assert.equal(state.candidates.length, 1);
-    assert.equal(state.candidates[0].rejectReasons.length, 0);
+    assert.deepEqual(state.candidates[0].rejectReasons, []);
     assert.equal(state.quotePlans.length, 2);
     assert.deepEqual(state.quotePlans.map((plan) => plan.label).sort(), ['NO', 'YES']);
     assert.equal(state.totals.plannedOrders, 2);
@@ -61,15 +60,14 @@ test('rewards scanner ranks an eligible market and plans two-sided buy quotes', 
   }
 });
 
-test('quote planner rejects markets when reward min size exceeds configured quote size', async () => {
+test('quote planner sizes orders from market reward min size', async () => {
   const originalFetch = globalThis.fetch;
   const originalEnv = { ...process.env };
   process.env.REWARDS_BLOCKED_CATEGORIES = '';
   process.env.REWARDS_BLOCKED_KEYWORDS = '';
   process.env.REWARDS_MIN_SECONDS_TO_CLOSE = '3600';
-  process.env.REWARDS_QUOTE_SIZE = '5';
-  process.env.REWARDS_MARKET_MAX_NOTIONAL = '20';
-  process.env.REWARDS_GLOBAL_MAX_NOTIONAL = '50';
+  process.env.REWARDS_MARKET_MAX_NOTIONAL = '100';
+  process.env.REWARDS_GLOBAL_MAX_NOTIONAL = '150';
 
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
@@ -78,7 +76,7 @@ test('quote planner rejects markets when reward min size exceeds configured quot
         {
           id: 'high-min-size-market',
           condition_id: '0xhighmin',
-          question: 'Will a small quote be rejected?',
+          question: 'Will an incentive-sized quote be planned?',
           category: 'weather',
           active: true,
           closed: false,
@@ -106,9 +104,10 @@ test('quote planner rejects markets when reward min size exceeds configured quot
 
   try {
     const state = await runRewardsTick(loadRewardsAppConfig());
-    assert.equal(state.candidates[0].rejectReasons.includes('reward min size 50 exceeds configured quote size 5'), true);
-    assert.equal(state.quotePlans.length, 0);
-    assert.equal(state.totals.plannedOrders, 0);
+    assert.deepEqual(state.candidates[0].rejectReasons, []);
+    assert.equal(state.quotePlans.length, 2);
+    assert.deepEqual([...new Set(state.quotePlans.map((plan) => plan.size))], [50]);
+    assert.equal(state.totals.plannedOrders, 2);
   } finally {
     globalThis.fetch = originalFetch;
     process.env = originalEnv;
@@ -121,7 +120,6 @@ test('scanner ranks actionable capital-fit markets before high-reward blocked ma
   process.env.REWARDS_BLOCKED_CATEGORIES = '';
   process.env.REWARDS_BLOCKED_KEYWORDS = '';
   process.env.REWARDS_MIN_SECONDS_TO_CLOSE = '3600';
-  process.env.REWARDS_QUOTE_SIZE = '5';
   process.env.REWARDS_MARKET_MAX_NOTIONAL = '20';
   process.env.REWARDS_GLOBAL_MAX_NOTIONAL = '50';
 

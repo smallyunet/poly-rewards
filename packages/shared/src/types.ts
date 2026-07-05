@@ -98,7 +98,6 @@ export type RewardsRuntimeConfig = {
   enabled: boolean;
   scannerLimit: number;
   candidateLimit: number;
-  quoteSize: number;
   quoteOffset: number;
   minDailyReward: number;
   minSecondsToClose: number;
