@@ -41,6 +41,28 @@ test('live execution posts eligible quotes after reconciliation guards pass', as
   assert.deepEqual(client.posted.map((intent) => intent.label).sort(), ['NO', 'YES']);
 });
 
+test('live execution picks affordable plans instead of stopping on larger plans', async () => {
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    rewards: { minCollateralBalance: 0 },
+  });
+  const client = fakeClient({ collateralBalance: 5 });
+  const snapshot = testSnapshot();
+  snapshot.quotePlans = [
+    { ...snapshot.quotePlans[1], id: 'large-plan', label: 'NO', tokenId: 'large-token', price: 0.9, size: 10, notional: 9 },
+    { ...snapshot.quotePlans[0], id: 'small-plan', label: 'YES', tokenId: 'small-token', price: 0.4, size: 5, notional: 2 },
+  ];
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(snapshot);
+
+  assert.equal(state.totals.postedThisTick, 1);
+  assert.equal(state.totals.skippedThisTick, 1);
+  assert.deepEqual(client.posted.map((intent) => intent.id), ['small-plan']);
+});
+
 test('live execution skips when an external open order already exists on a token', async () => {
   const config = testConfig({
     executionMode: 'live',
@@ -231,7 +253,7 @@ function testSnapshot(): RewardsDashboardState {
   };
 }
 
-function fakeClient(options: { openOrders?: any[] } = {}) {
+function fakeClient(options: { openOrders?: any[]; collateralBalance?: number } = {}) {
   const calls = {
     openOrders: 0,
     collateral: 0,
@@ -249,7 +271,7 @@ function fakeClient(options: { openOrders?: any[] } = {}) {
     },
     async getCollateralBalanceAllowance() {
       calls.collateral += 1;
-      return { balance: 100, allowance: 100 };
+      return { balance: options.collateralBalance ?? 100, allowance: 100 };
     },
     async getAvailableShares() {
       calls.shares += 1;

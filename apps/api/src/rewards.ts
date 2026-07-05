@@ -83,7 +83,7 @@ async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagn
   ]);
   const adjustedMidpoint = adjustedMidpointFromBooks(yesOrderbook, noOrderbook);
   const marketSpread = yesOrderbook?.spread ?? null;
-  const estimatedRequiredCapital = Math.max(minSize || appConfig.rewards.quoteSize, appConfig.rewards.quoteSize) * Math.max(adjustedMidpoint ?? 0.5, 0.01) * 2;
+  const estimatedRequiredCapital = appConfig.rewards.quoteSize * Math.max(adjustedMidpoint ?? 0.5, 0.01) * 2;
   const riskTags = riskTagsFor(appConfig, { question, category, endDate, dailyReward, minSize, maxSpread, competitiveness, yesOrderbook, noOrderbook });
   const rejectReasons = rejectReasonsFor(appConfig, { active, closed, acceptingOrders, dailyReward, minSize, maxSpread, endDate, tokens, yesOrderbook, noOrderbook, question, category });
   const rewardScore = dailyReward > 0 ? dailyReward / Math.max(estimatedRequiredCapital, 1) / Math.max(competitiveness ?? 1, 1) : 0;
@@ -175,7 +175,7 @@ function planQuotes(appConfig: RewardsAppConfig, candidates: RewardMarketCandida
     const yes = market.tokens.find((token) => token.label === 'YES');
     const no = market.tokens.find((token) => token.label === 'NO');
     if (!yes || !no) continue;
-    const size = Math.max(appConfig.rewards.quoteSize, market.minSize);
+    const size = appConfig.rewards.quoteSize;
     const offset = Math.max(appConfig.rewards.quoteOffset, (market.marketSpread ?? 0) / 2);
     const yesPrice = roundPrice(market.adjustedMidpoint - offset);
     const noPrice = roundPrice(1 - market.adjustedMidpoint - offset);
@@ -208,7 +208,7 @@ function quotePlan(appConfig: RewardsAppConfig, market: RewardMarketCandidate, t
     notional,
     offset: roundPrice(offset),
     eligible,
-    reason: eligible ? 'Dry-run quote is inside configured reward spread and risk limits.' : 'Dry-run quote is outside price or incentive-spread limits.',
+    reason: quoteReason(market, size, eligible),
     cancelRepostTriggers: [
       `midpoint drift > ${appConfig.rewards.maxMidpointDrift}`,
       `order age > ${appConfig.rewards.maxOrderAgeSeconds}s`,
@@ -218,6 +218,12 @@ function quotePlan(appConfig: RewardsAppConfig, market: RewardMarketCandidate, t
     ],
     createdAt,
   };
+}
+
+function quoteReason(market: RewardMarketCandidate, size: number, eligible: boolean): string {
+  if (!eligible) return 'Quote is outside price or incentive-spread limits.';
+  if (market.minSize > size) return `Quote is sized for available capital and is below the reward min size of ${roundShares(market.minSize)}.`;
+  return 'Quote is inside configured spread, price, and risk limits.';
 }
 
 function readTokens(raw: RawMarket): RewardMarketCandidate['tokens'] {
@@ -266,7 +272,7 @@ function riskTagsFor(appConfig: RewardsAppConfig, params: { question: string; ca
   if (/war|missile|strike|attack|breaking|explosion/.test(text)) tags.push('breaking-news');
   if (/ambiguous|committee|clarif|subject to|according to/.test(text)) tags.push('ambiguous-resolution');
   if (!params.yesOrderbook || !params.noOrderbook) tags.push('missing-orderbook');
-  if ((params.yesOrderbook?.bidDepth ?? 0) + (params.yesOrderbook?.askDepth ?? 0) + (params.noOrderbook?.bidDepth ?? 0) + (params.noOrderbook?.askDepth ?? 0) < params.minSize * 4) tags.push('thin-book');
+  if ((params.yesOrderbook?.bidDepth ?? 0) + (params.yesOrderbook?.askDepth ?? 0) + (params.noOrderbook?.bidDepth ?? 0) + (params.noOrderbook?.askDepth ?? 0) < appConfig.rewards.quoteSize * 4) tags.push('thin-book');
   return tags.length ? tags : ['eligible'];
 }
 
@@ -276,7 +282,6 @@ function rejectReasonsFor(appConfig: RewardsAppConfig, params: { active: boolean
   if (params.closed) reasons.push('market is closed');
   if (!params.acceptingOrders) reasons.push('market is not accepting orders');
   if (params.dailyReward < appConfig.rewards.minDailyReward) reasons.push('daily reward is below threshold');
-  if (params.minSize > appConfig.rewards.maxMarketNotional) reasons.push('minimum incentive size exceeds per-market notional cap');
   if (normalizeSpread(params.maxSpread) <= 0) reasons.push('missing max incentive spread');
   if (secondsTo(params.endDate) != null && secondsTo(params.endDate)! < appConfig.rewards.minSecondsToClose) reasons.push('market is too close to resolution');
   if (params.tokens.length < 2) reasons.push('missing YES/NO token ids');

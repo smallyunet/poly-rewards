@@ -29,19 +29,23 @@ BUY NO  at 1 - adjusted_midpoint - offset
 The planner favors markets with:
 
 - Visible daily reward rate.
-- Lower minimum incentive size.
 - Wider maximum incentive spread.
 - Lower competition.
 - Clear rules and enough time before resolution.
 - Usable YES/NO token IDs and orderbooks.
+- Affordable quote notional under the configured balance and risk caps.
 
 The planner rejects or penalizes:
 
 - Missing orderbook or missing token IDs.
 - Markets too close to resolution.
-- Very high minimum incentive size relative to configured capital caps.
 - Blocked categories and keyword-risk markets.
 - Live sports, short-duration crypto, breaking-news, and ambiguous-resolution patterns.
+
+Minimum incentive size is treated as market metadata and a risk signal, not as a
+hard order-size requirement. This allows small balances to post capital-sized
+orders, but those smaller orders are not guaranteed to count toward Polymarket
+liquidity rewards.
 
 ## Runtime Model
 
@@ -68,6 +72,8 @@ For guarded live operation:
 - Require an explicit live mode and CLOB credentials.
 - Reconcile open orders and avoid duplicate posting on tokens that already have
   active external orders.
+- Try lower-notional quote plans before higher-notional plans so the runtime can
+  post what the current balance can actually cover.
 - Cancel only managed orders from the current process when age, price drift, or
   orderbook freshness triggers fire, including orders restored from persisted
   execution state.

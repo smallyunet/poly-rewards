@@ -20,6 +20,10 @@ The worker runs every `BOT_TICK_MS` and produces a rewards dashboard snapshot:
 - In monitor mode, report the plans without posting.
 - In live mode, reconcile open orders, cancel stale managed orders, and post
   only quotes that pass collateral and inventory limits.
+- Size quotes from `REWARDS_QUOTE_SIZE`; Polymarket reward min incentive size is
+  reported as market metadata but does not force order size.
+- Prefer affordable quote plans during live execution by trying lower-notional
+  plans before higher-notional plans.
 - Persist managed orders, execution events, and inferred fill records under
   `RUNTIME_STATE_PATH` so live mode can recover managed order state after a
   process restart.
@@ -33,11 +37,13 @@ BUY YES at adjusted_midpoint - offset
 BUY NO  at 1 - adjusted_midpoint - offset
 ```
 
-The scanner favors markets with visible daily rewards, lower competition, lower
-minimum incentive size, wider incentive spread, clear rules, and enough time
-before resolution. It rejects close-to-resolution markets, missing books,
-blocked categories, and keyword-risk markets such as short-duration crypto,
-live sports, and breaking-news style markets.
+The scanner favors markets with visible daily rewards, lower competition, wider
+incentive spread, clear rules, and enough time before resolution. Minimum
+incentive size is surfaced as context, but the planner may create smaller
+capital-sized orders that are not guaranteed to qualify for Polymarket rewards.
+It rejects close-to-resolution markets, missing books, blocked categories, and
+keyword-risk markets such as short-duration crypto, live sports, and
+breaking-news style markets.
 
 ## Local Development
 

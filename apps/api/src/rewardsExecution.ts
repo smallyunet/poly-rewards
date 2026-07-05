@@ -126,10 +126,14 @@ export class RewardsExecutionService {
     let availableCollateral = collateralBalance;
     const activeManaged = () => Array.from(this.managedOrders.values()).filter(isActiveManagedOrder);
 
-    for (const plan of snapshot.quotePlans.filter((item) => item.eligible)) {
+    const eligiblePlans = snapshot.quotePlans
+      .filter((item) => item.eligible)
+      .sort((a, b) => a.notional - b.notional);
+
+    for (const plan of eligiblePlans) {
       if (availableCollateral - plan.notional < this.appConfig.rewards.minCollateralBalance) {
         counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because collateral would fall below the configured reserve.`, {
+        this.event('warn', 'skip', `Skipped ${plan.label} quote because available collateral cannot cover this plan.`, {
           ...planEventDetails(plan),
           collateralBalance: availableCollateral,
           minCollateralBalance: this.appConfig.rewards.minCollateralBalance,
