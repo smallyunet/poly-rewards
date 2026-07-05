@@ -1,0 +1,385 @@
+:root {
+  color: #17201b;
+  background: #f6f7f2;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --surface: #ffffff;
+  --line: #dfe4d8;
+  --muted: #647067;
+  --text: #17201b;
+  --good: #16774c;
+  --bad: #b42318;
+  --warn: #9a6700;
+  --ink-soft: #2f3b34;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
+
+.appShell {
+  width: min(1480px, 100%);
+  margin: 0 auto;
+  padding: 28px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #426b57;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 34px;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.subtle,
+.panelHeader p,
+.emptyState p {
+  color: var(--muted);
+}
+
+.subtle {
+  margin-top: 8px;
+}
+
+.iconButton {
+  min-width: 108px;
+  height: 42px;
+  border: 1px solid #1f3d2f;
+  background: #1f3d2f;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.iconButton:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.metricCard {
+  min-height: 108px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.metricIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #1f3d2f;
+  background: #e7efe6;
+  flex: 0 0 auto;
+}
+
+.metricCard.good .metricIcon {
+  color: var(--good);
+  background: #e4f5ed;
+}
+
+.metricCard span,
+.controlRow span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.metricCard strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.metricCard small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.contentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(420px, 0.65fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.contentGrid.lower {
+  grid-template-columns: minmax(360px, 0.7fr) minmax(0, 1.3fr);
+  margin-top: 16px;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.panelHeader {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panelHeader p {
+  margin-top: 5px;
+  font-size: 13px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+}
+
+.compact table {
+  min-width: 620px;
+}
+
+th,
+td {
+  padding: 13px 14px;
+  border-bottom: 1px solid #edf0e8;
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+th {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  background: #fbfcf8;
+}
+
+.marketCell strong {
+  display: block;
+  max-width: 520px;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.marketCell span {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tagList,
+.reasonList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.badge {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #eef1eb;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.badge.good {
+  background: #e4f5ed;
+  color: var(--good);
+}
+
+.badge.bad {
+  background: #fde8e5;
+  color: var(--bad);
+}
+
+.positive {
+  color: var(--good);
+  font-weight: 800;
+}
+
+.negative {
+  color: var(--bad);
+  font-weight: 800;
+}
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.smallText {
+  max-width: 260px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.controlGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.controlRow {
+  min-height: 72px;
+  padding: 14px;
+  background: #fff;
+}
+
+.controlRow strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 18px;
+}
+
+.logList {
+  display: grid;
+}
+
+.logRow {
+  display: grid;
+  grid-template-columns: 18px 78px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 12px 16px;
+  border-bottom: 1px solid #edf0e8;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.logRow.warn svg,
+.logRow.error svg {
+  color: var(--warn);
+}
+
+.logRow.error {
+  color: var(--bad);
+}
+
+.logRow p {
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.emptyState {
+  padding: 36px 18px;
+  text-align: center;
+}
+
+.emptyState h2 {
+  margin-bottom: 8px;
+}
+
+.emptyState.bad h2 {
+  color: var(--bad);
+}
+
+@media (max-width: 980px) {
+  .appShell {
+    padding: 18px;
+  }
+
+  .topbar,
+  .contentGrid,
+  .contentGrid.lower {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    gap: 14px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  .metricGrid,
+  .controlGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .iconButton {
+    width: 100%;
+  }
+}

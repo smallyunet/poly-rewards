@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    env_file: .env
+    environment:
+      PORT: 8798
+      WEB_DIST_DIR: /app/dist/apps/web
+    ports:
+      - "8798:8798"
+
+  web:
+    build:
+      context: .
+      target: web
+    ports:
+      - "4184:80"
+    depends_on:
+      - api

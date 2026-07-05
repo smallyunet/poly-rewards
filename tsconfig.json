@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": [
+    "apps/api/src/main.ts",
+    "apps/api/src/rewards.ts",
+    "apps/api/src/rewardsConfig.ts",
+    "apps/api/src/rewardsStore.ts",
+    "apps/api/src/server.ts",
+    "packages/shared/src/**/*.ts",
+    "packages/polymarket/src/client.ts",
+    "packages/polymarket/src/index.ts"
+  ],
+  "exclude": ["node_modules", "dist", "apps/web"]
+}

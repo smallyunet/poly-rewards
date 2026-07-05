@@ -1,0 +1,39 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+      args:
+        APP_VERSION: ${APP_VERSION:-0.1.0}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 8798
+      WEB_DIST_DIR: /app/dist/apps/web
+      RUNTIME_STATE_PATH: /app/data/runtime-state.json
+    expose:
+      - "8798"
+    volumes:
+      - ./data:/app/data
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-:80}
+    ports:
+      - "${HTTP_PORT:-8098}:80"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
