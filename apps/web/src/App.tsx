@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -44,21 +44,47 @@ type Tone = 'good' | 'warn' | 'bad' | 'neutral';
 
 export function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [activeTab, setActiveTab] = useState<DashboardTab>('strategy');
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => readTabFromUrl());
+  const latestLoadId = useRef(0);
+  const mounted = useRef(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const loadId = latestLoadId.current + 1;
+    latestLoadId.current = loadId;
     try {
       const data = await api<RewardsAppState>('/api/state');
+      if (!mounted.current || loadId !== latestLoadId.current) return;
       setState({ status: 'ready', data });
     } catch (error) {
+      if (!mounted.current || loadId !== latestLoadId.current) return;
       setState({ status: 'error', error: error instanceof Error ? error.message : String(error) });
     }
-  };
+  }, []);
+
+  const selectTab = useCallback((tab: DashboardTab) => {
+    setActiveTab(tab);
+    writeTabToUrl(tab);
+  }, []);
 
   useEffect(() => {
+    mounted.current = true;
     void load();
     const timer = window.setInterval(() => void load(), DASHBOARD_REFRESH_MS);
-    return () => window.clearInterval(timer);
+    return () => {
+      mounted.current = false;
+      window.clearInterval(timer);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    const syncTabFromUrl = () => setActiveTab(readTabFromUrl());
+    window.addEventListener('popstate', syncTabFromUrl);
+    window.addEventListener('hashchange', syncTabFromUrl);
+    syncTabFromUrl();
+    return () => {
+      window.removeEventListener('popstate', syncTabFromUrl);
+      window.removeEventListener('hashchange', syncTabFromUrl);
+    };
   }, []);
 
   if (state.status === 'loading') {
@@ -122,7 +148,7 @@ export function App() {
             key={tab.id}
             type="button"
             className={`tabButton ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => selectTab(tab.id)}
             aria-current={activeTab === tab.id ? 'page' : undefined}
           >
             {tab.icon}
@@ -200,6 +226,25 @@ const tabs: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = 
   { id: 'risk', label: 'Risk', icon: <ShieldQuestion size={16} /> },
   { id: 'events', label: 'Events', icon: <AlertTriangle size={16} /> },
 ];
+
+const tabIds = new Set<DashboardTab>(tabs.map((tab) => tab.id));
+
+function readTabFromUrl(): DashboardTab {
+  const url = new URL(window.location.href);
+  const tab = url.searchParams.get('tab') || url.hash.replace(/^#/, '');
+  return isDashboardTab(tab) ? tab : 'strategy';
+}
+
+function writeTabToUrl(tab: DashboardTab) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('tab', tab);
+  url.hash = '';
+  window.history.pushState(null, '', url);
+}
+
+function isDashboardTab(value: string): value is DashboardTab {
+  return tabIds.has(value as DashboardTab);
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   return <main className="appShell">{children}</main>;
