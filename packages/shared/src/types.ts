@@ -105,6 +105,7 @@ export type RewardsRuntimeConfig = {
   maxMarketNotional: number;
   maxOpenMarkets: number;
   maxMidpointDrift: number;
+  driftOffsetRatio: number;
   maxOrderAgeSeconds: number;
   maxOrderHardAgeSeconds: number;
   maxOrderbookAgeSeconds: number;

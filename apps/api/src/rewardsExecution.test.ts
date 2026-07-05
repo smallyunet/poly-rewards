@@ -343,6 +343,48 @@ test('live execution does not cancel solely on soft order age before hard refres
   assert.equal(state.totals.cancelledThisTick, 0);
 });
 
+test('live execution uses dynamic offset-based price drift when cancelling', async () => {
+  const runtimeStatePath = tempStatePath();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxMidpointDrift: 0.015,
+      driftOffsetRatio: 0.5,
+    },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'order-YES',
+      planId: 'old-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 0,
+      remainingSize: 5,
+      notional: 2.43,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }],
+  });
+  const snapshot = testSnapshot();
+  snapshot.quotePlans[0] = { ...snapshot.quotePlans[0], price: 0.51, offset: 0.06 };
+  const execution = new RewardsExecutionService(config, fakeClient({
+    openOrders: [{ id: 'order-YES', tokenId: 'yes-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} }],
+  }));
+
+  const state = await execution.reconcile(snapshot);
+
+  assert.equal(state.totals.cancelledThisTick, 0);
+});
+
 test('live execution cancel events include the cancellation reason', async () => {
   const runtimeStatePath = tempStatePath();
   const config = testConfig({

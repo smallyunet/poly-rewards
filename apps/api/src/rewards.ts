@@ -221,7 +221,7 @@ function quotePlan(appConfig: RewardsAppConfig, market: RewardMarketCandidate, t
     eligible,
     reason: quoteReason(market, size, eligible),
     cancelRepostTriggers: [
-      `midpoint drift > ${appConfig.rewards.maxMidpointDrift}`,
+      `price drift > max(${appConfig.rewards.maxMidpointDrift}, offset * ${appConfig.rewards.driftOffsetRatio})`,
       `hard order age > ${appConfig.rewards.maxOrderHardAgeSeconds}s`,
       `orderbook age > ${appConfig.rewards.maxOrderbookAgeSeconds}s`,
       'inventory exceeds per-outcome limit',

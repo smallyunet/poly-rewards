@@ -51,6 +51,7 @@ function loadRewardsRuntimeConfig(): RewardsRuntimeConfig {
     maxMarketNotional: numberEnv('REWARDS_MARKET_MAX_NOTIONAL', 10),
     maxOpenMarkets: parsePositiveInteger(process.env.REWARDS_MAX_OPEN_MARKETS, 10),
     maxMidpointDrift: numberEnv('REWARDS_MAX_MIDPOINT_DRIFT', 0.015),
+    driftOffsetRatio: numberEnv('REWARDS_DRIFT_OFFSET_RATIO', 0.5),
     maxOrderAgeSeconds: parsePositiveInteger(process.env.REWARDS_MAX_ORDER_AGE_SECONDS, 600),
     maxOrderHardAgeSeconds: parsePositiveInteger(process.env.REWARDS_MAX_ORDER_HARD_AGE_SECONDS, 1_800),
     maxOrderbookAgeSeconds: numberEnv('REWARDS_MAX_ORDERBOOK_AGE_SECONDS', 5),

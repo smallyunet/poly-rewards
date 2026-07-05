@@ -28,6 +28,8 @@ type CancelReason = {
   originalPrice: number;
   priceDrift?: number;
   maxMidpointDrift: number;
+  planOffset?: number;
+  driftOffsetRatio: number;
   ageSeconds: number;
   maxOrderHardAgeSeconds: number;
   staleOrderbook: boolean;
@@ -125,12 +127,15 @@ export class RewardsExecutionService {
       const currentPlan = plansByToken.get(order.tokenId);
       const ageSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
       const priceDrift = order.side === 'BUY' && currentPlan ? Math.abs(currentPlan.price - order.price) : 0;
+      const dynamicMaxDrift = currentPlan ? maxPriceDrift(this.appConfig.rewards.maxMidpointDrift, currentPlan.offset, this.appConfig.rewards.driftOffsetRatio) : this.appConfig.rewards.maxMidpointDrift;
       const staleOrderbook = staleTokenIds.has(order.tokenId);
       const reason = cancelReasonForOrder({
         currentPrice: order.side === 'SELL' ? order.price : currentPlan?.price,
         originalPrice: order.price,
         priceDrift,
-        maxMidpointDrift: this.appConfig.rewards.maxMidpointDrift,
+        maxMidpointDrift: dynamicMaxDrift,
+        planOffset: currentPlan?.offset,
+        driftOffsetRatio: this.appConfig.rewards.driftOffsetRatio,
         ageSeconds,
         maxOrderHardAgeSeconds: this.appConfig.rewards.maxOrderHardAgeSeconds,
         staleOrderbook,
@@ -637,6 +642,10 @@ function cancelReasonForOrder(params: Omit<CancelReason, 'message'>): CancelReas
     };
   }
   return null;
+}
+
+function maxPriceDrift(baseDrift: number, planOffset: number, ratio: number): number {
+  return roundPrice(Math.max(baseDrift, planOffset * ratio));
 }
 
 function findComparableOpenOrder(plan: RewardQuotePlan, openOrders: OpenOrderSummary[]): OpenOrderSummary | undefined {

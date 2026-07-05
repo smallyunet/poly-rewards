@@ -502,6 +502,7 @@ function RiskControls({ state }: { state: RewardsAppState }) {
     ['Global notional cap', formatUsd(config.maxGlobalNotional), 'neutral'],
     ['Per-market notional cap', formatUsd(config.maxMarketNotional), 'neutral'],
     ['Quote offset', config.quoteOffset.toFixed(3), 'neutral'],
+    ['Drift offset ratio', config.driftOffsetRatio.toFixed(2), 'neutral'],
     ['Min daily reward', formatUsd(config.minDailyReward), 'neutral'],
     ['Min time to close', `${Math.round(config.minSecondsToClose / 3600)}h`, 'neutral'],
     ['Drift review age', `${config.maxOrderAgeSeconds}s`, 'neutral'],

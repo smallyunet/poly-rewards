@@ -82,6 +82,7 @@ REWARDS_GLOBAL_MAX_NOTIONAL=100
 REWARDS_MARKET_MAX_NOTIONAL=10
 REWARDS_MAX_OPEN_MARKETS=10
 REWARDS_MAX_MIDPOINT_DRIFT=0.015
+REWARDS_DRIFT_OFFSET_RATIO=0.5
 REWARDS_MAX_ORDER_AGE_SECONDS=600
 REWARDS_MAX_ORDER_HARD_AGE_SECONDS=1800
 REWARDS_MAX_ORDERBOOK_AGE_SECONDS=5
@@ -98,8 +99,9 @@ REWARDS_BLOCKED_KEYWORDS=5m,15m,live,in-play,missile,strike,war,attack,breaking
 
 Order management is drift-first. Managed orders are not cancelled merely
 because they are 60 seconds old. They are cancelled when the current quote plan
-disappears, midpoint drift exceeds `REWARDS_MAX_MIDPOINT_DRIFT`, orderbook data
-is stale, or the long hard-refresh age is reached.
+disappears, price drift exceeds `max(REWARDS_MAX_MIDPOINT_DRIFT,
+quoteOffset * REWARDS_DRIFT_OFFSET_RATIO)`, orderbook data is stale, or the
+long hard-refresh age is reached.
 
 For markets with active quote plans or active managed orders, the worker
 subscribes to Polymarket's public market WebSocket and uses live orderbook
