@@ -90,6 +90,7 @@ async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagn
   const estimatedRequiredCapital = quotePreview?.notional ?? minSize;
   const riskTags = riskTagsFor(appConfig, { question, category, endDate, dailyReward, minSize, maxSpread, competitiveness, yesOrderbook, noOrderbook });
   const rejectReasons = rejectReasonsFor(appConfig, { active, closed, acceptingOrders, dailyReward, minSize, maxSpread, endDate, tokens, yesOrderbook, noOrderbook, question, category });
+  rejectReasons.push(...depthRejectReasonsFor(appConfig, minSize, yesOrderbook, noOrderbook));
   if (quotePreview && !quotePreview.eligible) rejectReasons.push('reward-sized quote is outside price or incentive-spread limits');
   if (estimatedRequiredCapital > appConfig.rewards.maxMarketNotional) rejectReasons.push('minimum reward-sized quote exceeds per-market notional cap');
   if (estimatedRequiredCapital > appConfig.rewards.maxGlobalNotional) rejectReasons.push('minimum reward-sized quote exceeds global notional cap');
@@ -303,6 +304,26 @@ function rejectReasonsFor(appConfig: RewardsAppConfig, params: { active: boolean
   return reasons;
 }
 
+function depthRejectReasonsFor(appConfig: RewardsAppConfig, planSize: number, yesOrderbook?: RewardOrderbookSummary, noOrderbook?: RewardOrderbookSummary): string[] {
+  if (planSize <= 0) return [];
+  return [
+    ...sideDepthRejectReasons(appConfig, planSize, yesOrderbook),
+    ...sideDepthRejectReasons(appConfig, planSize, noOrderbook),
+  ];
+}
+
+function sideDepthRejectReasons(appConfig: RewardsAppConfig, planSize: number, book?: RewardOrderbookSummary): string[] {
+  if (!book) return [];
+  const reasons: string[] = [];
+  const minBidDepth = roundShares(planSize * appConfig.rewards.minSideDepthMultiplier);
+  const maxSizeByQueueShare = roundShares(book.bidDepth * appConfig.rewards.maxQueueShare);
+  const minAskDepth = roundShares(planSize * appConfig.rewards.minAskDepthMultiplier);
+  if (book.bidDepth < minBidDepth) reasons.push(`${book.label} bid depth ${formatShares(book.bidDepth)} is below required ${formatShares(minBidDepth)} for ${formatShares(planSize)} shares`);
+  if (planSize > maxSizeByQueueShare) reasons.push(`${book.label} plan size ${formatShares(planSize)} exceeds ${formatPercent(appConfig.rewards.maxQueueShare)} of bid depth (${formatShares(maxSizeByQueueShare)} shares)`);
+  if (book.askDepth < minAskDepth) reasons.push(`${book.label} ask depth ${formatShares(book.askDepth)} is below required ${formatShares(minAskDepth)} for ${formatShares(planSize)} shares`);
+  return reasons;
+}
+
 function riskScoreFor(tags: RewardRiskTag[], rejectReasons: string[]): number {
   const weights: Partial<Record<RewardRiskTag, number>> = {
     'high-competition': 1.5,
@@ -465,6 +486,14 @@ function roundPrice(value: number): number {
 
 function roundShares(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function formatShares(value: number): string {
+  return roundShares(value).toFixed(2);
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
 
 function roundScore(value: number): number {

@@ -110,6 +110,9 @@ export type RewardsRuntimeConfig = {
   maxOrderHardAgeSeconds: number;
   maxOrderbookAgeSeconds: number;
   maxInventorySharesPerOutcome: number;
+  maxQueueShare: number;
+  minSideDepthMultiplier: number;
+  minAskDepthMultiplier: number;
   inventoryExitEnabled: boolean;
   maxUnhedgedInventoryAgeSeconds: number;
   maxInventoryLossPerShare: number;
