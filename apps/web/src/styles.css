@@ -492,10 +492,20 @@ h3 {
   line-height: 1.4;
 }
 
+.marketMain .fundingHint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #efd79d;
+  border-radius: 7px;
+  background: var(--warn-soft);
+  color: #704500;
+  font-weight: 700;
+}
+
 .marketStats,
 .quoteNumbers {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(82px, 1fr));
   gap: 8px;
 }
 

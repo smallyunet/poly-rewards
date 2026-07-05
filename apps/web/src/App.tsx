@@ -28,6 +28,7 @@ import type {
   RewardManagedOrder,
   RewardMarketCandidate,
   RewardQuotePlan,
+  RewardsRuntimeConfig,
   RewardsAppState,
   RuntimeLogRecord,
 } from '../../../packages/shared/src';
@@ -158,9 +159,9 @@ export function App() {
       {activeTab === 'markets' ? (
         <section className="workspaceGrid tabPanel">
           <Panel title="Ranked Markets" subtitle="Reward candidates ordered by net score after risk penalties.">
-            <MarketList candidates={rewards.candidates.slice(0, 10)} />
+            <MarketList candidates={rewards.candidates.slice(0, 10)} config={rewards.config} />
           </Panel>
-          <Panel title="Quote Plans" subtitle="Current BUY YES / BUY NO plan set, including rewards min-size warnings.">
+          <Panel title="Quote Plans" subtitle="Current BUY YES / BUY NO plan set after reward min-size enforcement.">
             <QuotePlanList plans={rewards.quotePlans} candidates={rewards.candidates} />
           </Panel>
         </section>
@@ -322,30 +323,41 @@ function QualityMeter({ label, value, total, tone = 'neutral' }: { label: string
   );
 }
 
-function MarketList({ candidates }: { candidates: RewardMarketCandidate[] }) {
+function MarketList({ candidates, config }: { candidates: RewardMarketCandidate[]; config: RewardsRuntimeConfig }) {
   if (!candidates.length) return <EmptyState title="No candidates" detail="No reward markets passed scanner ingestion yet." />;
   return (
     <div className="marketList">
-      {candidates.map((market) => (
-        <article className="marketRow" key={market.id}>
-          <div className="marketMain">
-            <div className="marketTitleLine">
-              <h3>{market.question}</h3>
-              {market.rejectReasons.length ? <Badge tone="bad">blocked</Badge> : <Badge tone="good">eligible</Badge>}
+      {candidates.map((market) => {
+        const economics = quoteEconomics(market, config);
+        return (
+          <article className="marketRow" key={market.id}>
+            <div className="marketMain">
+              <div className="marketTitleLine">
+                <h3>{market.question}</h3>
+                {market.rejectReasons.length ? <Badge tone="bad">blocked</Badge> : <Badge tone="good">eligible</Badge>}
+              </div>
+              <p>{market.category || market.slug || shortId(market.conditionId || market.id)}</p>
+              <TagList tags={market.riskTags} />
+              {economics && economics.shortfallShares > 0 ? (
+                <p className="fundingHint">
+                  Needs at least {formatShares(economics.minShares)} shares per side, estimated {formatUsd(economics.minTwoSidedCost)} total.
+                  Current quote size is short by {formatShares(economics.shortfallShares)} shares per side.
+                </p>
+              ) : null}
             </div>
-            <p>{market.category || market.slug || shortId(market.conditionId || market.id)}</p>
-            <TagList tags={market.riskTags} />
-          </div>
-          <div className="marketStats">
-            <Stat label="Reward" value={formatUsd(market.dailyReward)} />
-            <Stat label="Min size" value={formatShares(market.minSize)} tone={market.minSize > 5 ? 'warn' : 'neutral'} />
-            <Stat label="Max spread" value={formatCents(market.maxSpread)} />
-            <Stat label="Mid" value={market.adjustedMidpoint == null ? '-' : market.adjustedMidpoint.toFixed(3)} />
-            <Stat label="Net" value={market.netScore.toFixed(3)} tone={market.netScore > 0 ? 'good' : 'bad'} />
-          </div>
-          {market.rejectReasons.length ? <ReasonList reasons={market.rejectReasons} /> : null}
-        </article>
-      ))}
+            <div className="marketStats">
+              <Stat label="Reward" value={formatUsd(market.dailyReward)} />
+              <Stat label="Min shares" value={formatShares(market.minSize)} tone={economics && economics.shortfallShares > 0 ? 'bad' : 'neutral'} />
+              <Stat label="Min capital" value={economics ? formatUsd(economics.minTwoSidedCost) : '-'} tone={economics && economics.shortfallShares > 0 ? 'warn' : 'neutral'} />
+              <Stat label="Current cost" value={economics ? formatUsd(economics.currentTwoSidedCost) : '-'} />
+              <Stat label="Max spread" value={formatCents(market.maxSpread)} />
+              <Stat label="Mid" value={market.adjustedMidpoint == null ? '-' : market.adjustedMidpoint.toFixed(3)} />
+              <Stat label="Net" value={market.netScore.toFixed(3)} tone={market.netScore > 0 ? 'good' : 'bad'} />
+            </div>
+            {market.rejectReasons.length ? <ReasonList reasons={market.rejectReasons} /> : null}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -358,14 +370,12 @@ function QuotePlanList({ plans, candidates }: { plans: RewardQuotePlan[]; candid
     <div className="quoteList">
       {visible.map((plan) => {
         const market = marketById.get(plan.marketId);
-        const minSize = market?.minSize ?? 0;
-        const belowMin = minSize > plan.size;
         return (
           <article className={`quoteRow ${plan.eligible ? '' : 'muted'}`} key={plan.id}>
             <div>
               <div className="quoteTop">
                 <Badge tone={plan.label === 'YES' ? 'good' : 'neutral'}>{plan.label} BUY</Badge>
-                {belowMin ? <Badge tone="warn">below rewards min</Badge> : <Badge tone="good">reward-sized</Badge>}
+                <Badge tone="good">reward-sized</Badge>
               </div>
               <p>{market?.question || shortId(plan.marketId)}</p>
             </div>
@@ -490,8 +500,8 @@ function RiskBreakdown({ state }: { state: RewardsAppState }) {
       <div className="riskNote">
         <BarChart3 size={18} />
         <p>
-          Minimum incentive size is currently a warning signal, not a hard filter. Orders below the market
-          min size can be posted but may not earn rewards credit.
+          Minimum incentive size is now a hard filter. Markets whose reward min size exceeds the configured
+          quote size are rejected before quote planning and cannot reach live execution.
         </p>
       </div>
     </div>
@@ -637,6 +647,32 @@ function tagTone(tag: string): Tone {
   if (/good|low-competition|wide|eligible|low-min/.test(tag)) return 'good';
   if (/missing|near|live|crypto|breaking|ambiguous|thin|high/.test(tag)) return 'warn';
   return 'neutral';
+}
+
+function quoteEconomics(market: RewardMarketCandidate, config: RewardsRuntimeConfig) {
+  if (market.adjustedMidpoint == null) return null;
+  const offset = Math.max(config.quoteOffset, (market.marketSpread ?? 0) / 2);
+  const yesPrice = roundPrice(market.adjustedMidpoint - offset);
+  const noPrice = roundPrice(1 - market.adjustedMidpoint - offset);
+  if (yesPrice <= 0.01 || yesPrice >= 0.99 || noPrice <= 0.01 || noPrice >= 0.99) return null;
+  const pairCostPerShare = yesPrice + noPrice;
+  const minShares = Math.max(market.minSize, 0);
+  return {
+    yesPrice,
+    noPrice,
+    minShares,
+    currentTwoSidedCost: roundMoney(config.quoteSize * pairCostPerShare),
+    minTwoSidedCost: roundMoney(minShares * pairCostPerShare),
+    shortfallShares: Math.max(minShares - config.quoteSize, 0),
+  };
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function roundPrice(value: number) {
+  return Math.round(value * 1000) / 1000;
 }
 
 function formatUsd(value: number) {

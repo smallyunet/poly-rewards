@@ -222,8 +222,7 @@ function quotePlan(appConfig: RewardsAppConfig, market: RewardMarketCandidate, t
 
 function quoteReason(market: RewardMarketCandidate, size: number, eligible: boolean): string {
   if (!eligible) return 'Quote is outside price or incentive-spread limits.';
-  if (market.minSize > size) return `Quote is sized for available capital and is below the reward min size of ${roundShares(market.minSize)}.`;
-  return 'Quote is inside configured spread, price, and risk limits.';
+  return `Quote meets reward min size ${roundShares(market.minSize)} and is inside configured spread, price, and risk limits.`;
 }
 
 function readTokens(raw: RawMarket): RewardMarketCandidate['tokens'] {
@@ -282,6 +281,7 @@ function rejectReasonsFor(appConfig: RewardsAppConfig, params: { active: boolean
   if (params.closed) reasons.push('market is closed');
   if (!params.acceptingOrders) reasons.push('market is not accepting orders');
   if (params.dailyReward < appConfig.rewards.minDailyReward) reasons.push('daily reward is below threshold');
+  if (params.minSize > appConfig.rewards.quoteSize) reasons.push(`reward min size ${roundShares(params.minSize)} exceeds configured quote size ${roundShares(appConfig.rewards.quoteSize)}`);
   if (normalizeSpread(params.maxSpread) <= 0) reasons.push('missing max incentive spread');
   if (secondsTo(params.endDate) != null && secondsTo(params.endDate)! < appConfig.rewards.minSecondsToClose) reasons.push('market is too close to resolution');
   if (params.tokens.length < 2) reasons.push('missing YES/NO token ids');
