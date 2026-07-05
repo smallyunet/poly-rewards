@@ -149,6 +149,115 @@ test('live execution skips one-sided quote plan groups', async () => {
   assert.match(skipEventMessage(state, 'requires both YES and NO'), /requires both YES and NO eligible quote plans/);
 });
 
+test('live execution treats filled inventory as one side of the market bundle', async () => {
+  const runtimeStatePath = tempStatePath();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: { inventoryExitEnabled: false },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'filled-yes',
+      planId: 'filled-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 5,
+      remainingSize: 0,
+      notional: 2.43,
+      status: 'filled',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }],
+    fills: [{
+      id: 'fill-yes',
+      orderId: 'filled-yes',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      notional: 2.43,
+      source: 'terminal_reconcile',
+      createdAt: new Date().toISOString(),
+    }],
+  });
+  const client = fakeClient();
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(testSnapshot());
+
+  assert.equal(state.totals.postedThisTick, 1);
+  assert.deepEqual(client.posted.map((intent) => `${intent.side}:${intent.label}`), ['BUY:NO']);
+});
+
+test('live execution posts SELL exit for stale unhedged inventory', async () => {
+  const runtimeStatePath = tempStatePath();
+  const old = new Date(Date.now() - 60_000).toISOString();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxUnhedgedInventoryAgeSeconds: 1,
+      maxInventoryLossPerShare: 1,
+      minInventoryExitShares: 1,
+    },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'filled-yes',
+      planId: 'filled-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 5,
+      remainingSize: 0,
+      notional: 2.43,
+      status: 'filled',
+      createdAt: old,
+      updatedAt: old,
+    }],
+    fills: [{
+      id: 'fill-yes',
+      orderId: 'filled-yes',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      notional: 2.43,
+      source: 'terminal_reconcile',
+      createdAt: old,
+    }],
+  });
+  const client = fakeClient({ inventory: 5 });
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(testSnapshot());
+
+  assert.equal(state.totals.postedThisTick, 1);
+  assert.equal(state.activeOrders[0].side, 'SELL');
+  assert.deepEqual(client.posted.map((intent) => `${intent.side}:${intent.label}:${intent.limitPrice}`), ['SELL:YES:0.49']);
+  assert.match(state.recentEvents.find((event) => event.message.includes('SELL exit'))?.message || '', /SELL exit/);
+});
+
 
 test('execution state persists and restores managed orders across service instances', async () => {
   const runtimeStatePath = tempStatePath();
@@ -286,6 +395,17 @@ function testConfig(overrides: Partial<RewardsAppConfig> & { rewards?: Partial<R
 
 function tempStatePath(): string {
   return path.join(os.tmpdir(), `poly-rewards-execution-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
+}
+
+function writeExecutionState(runtimeStatePath: string, data: { managedOrders?: any[]; fills?: any[]; events?: any[] }) {
+  fs.mkdirSync(path.dirname(runtimeStatePath), { recursive: true });
+  fs.writeFileSync(runtimeStatePath, JSON.stringify({
+    version: 1,
+    managedOrders: data.managedOrders || [],
+    fills: data.fills || [],
+    events: data.events || [],
+    updatedAt: new Date().toISOString(),
+  }));
 }
 
 function skipEventMessage(state: Awaited<ReturnType<RewardsExecutionService['reconcile']>>, text: string): string {

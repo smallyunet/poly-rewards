@@ -431,6 +431,7 @@ function ActiveOrdersTable({ orders }: { orders: RewardManagedOrder[] }) {
       <table>
         <thead>
           <tr>
+            <th>Side</th>
             <th>Outcome</th>
             <th>Price</th>
             <th>Open</th>
@@ -443,6 +444,7 @@ function ActiveOrdersTable({ orders }: { orders: RewardManagedOrder[] }) {
         <tbody>
           {orders.slice(0, 18).map((order) => (
             <tr key={order.orderId}>
+              <td><Badge tone={order.side === 'SELL' ? 'warn' : 'neutral'}>{order.side}</Badge></td>
               <td><Badge tone={order.label === 'YES' ? 'good' : 'neutral'}>{order.label}</Badge></td>
               <td className="mono">{order.price.toFixed(3)}</td>
               <td className="mono">{formatShares(order.remainingSize ?? order.size)}</td>
@@ -506,6 +508,10 @@ function RiskControls({ state }: { state: RewardsAppState }) {
     ['Hard refresh age', `${config.maxOrderHardAgeSeconds}s`, config.maxOrderHardAgeSeconds < 600 ? 'warn' : 'neutral'],
     ['Orderbook max age', `${config.maxOrderbookAgeSeconds}s`, 'neutral'],
     ['Inventory cap / outcome', formatShares(config.maxInventorySharesPerOutcome), 'neutral'],
+    ['Inventory exit', config.inventoryExitEnabled ? 'enabled' : 'disabled', config.inventoryExitEnabled ? 'warn' : 'neutral'],
+    ['Unhedged max age', `${config.maxUnhedgedInventoryAgeSeconds}s`, 'neutral'],
+    ['Inventory stop loss', config.maxInventoryLossPerShare.toFixed(3), 'neutral'],
+    ['Min exit size', formatShares(config.minInventoryExitShares), 'neutral'],
     ['Collateral reserve', formatUsd(config.minCollateralBalance), config.minCollateralBalance <= 0 ? 'warn' : 'neutral'],
     ['Max active / market', String(config.maxActiveOrdersPerMarket), 'neutral'],
   ] as Array<[string, string, Tone]>;

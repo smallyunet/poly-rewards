@@ -86,6 +86,10 @@ REWARDS_MAX_ORDER_AGE_SECONDS=600
 REWARDS_MAX_ORDER_HARD_AGE_SECONDS=1800
 REWARDS_MAX_ORDERBOOK_AGE_SECONDS=5
 REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME=20
+REWARDS_INVENTORY_EXIT_ENABLED=true
+REWARDS_MAX_UNHEDGED_INVENTORY_AGE_SECONDS=600
+REWARDS_MAX_INVENTORY_LOSS_PER_SHARE=0.05
+REWARDS_MIN_INVENTORY_EXIT_SHARES=1
 REWARDS_MIN_COLLATERAL_BALANCE=5
 REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET=2
 REWARDS_BLOCKED_CATEGORIES=crypto,geopolitics
@@ -100,6 +104,16 @@ is stale, or the long hard-refresh age is reached.
 For markets with active quote plans or active managed orders, the worker
 subscribes to Polymarket's public market WebSocket and uses live orderbook
 updates before falling back to REST snapshots.
+
+Execution is market-bundle first: YES and NO reward quotes must both be eligible
+and affordable before new orders are posted. If one side is already filled or
+open, it is treated as the covered side and the worker only posts the missing
+side. If a newly posted bundle fails halfway through, the worker cancels the
+newly posted side to avoid leaving a single-sided order.
+
+Inventory exits are enabled by default. Unhedged filled inventory is sold at the
+current best bid after `REWARDS_MAX_UNHEDGED_INVENTORY_AGE_SECONDS`, or sooner
+when the per-share loss reaches `REWARDS_MAX_INVENTORY_LOSS_PER_SHARE`.
 
 ## API
 

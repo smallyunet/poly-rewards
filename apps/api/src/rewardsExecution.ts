@@ -44,6 +44,7 @@ type ExistingOrderMatch = {
   orderId?: string;
   price?: number;
   size?: number | null;
+  source: 'open_order' | 'inventory';
 };
 
 const ACTIVE_ORDER_STATUSES = new Set(['', 'open', 'live', 'matched', 'partially_filled', 'posted']);
@@ -97,6 +98,7 @@ export class RewardsExecutionService {
       ]);
       this.reconcileManagedOrderStatuses(openOrders, counters, now);
       await this.cancelUnsafeManagedOrders(snapshot, openOrders, counters, now);
+      await this.manageInventoryExits(snapshot, openOrders, counters, now);
       await this.postMissingQuotes(snapshot, openOrders, collateral.balance, counters, now);
       const state = this.state(now, counters, collateral.balance, collateral.allowance);
       this.persistState(now);
@@ -122,10 +124,10 @@ export class RewardsExecutionService {
 
       const currentPlan = plansByToken.get(order.tokenId);
       const ageSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
-      const priceDrift = currentPlan ? Math.abs(currentPlan.price - order.price) : Number.POSITIVE_INFINITY;
+      const priceDrift = order.side === 'BUY' && currentPlan ? Math.abs(currentPlan.price - order.price) : 0;
       const staleOrderbook = staleTokenIds.has(order.tokenId);
       const reason = cancelReasonForOrder({
-        currentPrice: currentPlan?.price,
+        currentPrice: order.side === 'SELL' ? order.price : currentPlan?.price,
         originalPrice: order.price,
         priceDrift,
         maxMidpointDrift: this.appConfig.rewards.maxMidpointDrift,
@@ -160,10 +162,20 @@ export class RewardsExecutionService {
   private async postMissingQuotes(snapshot: RewardsDashboardState, openOrders: OpenOrderSummary[], collateralBalance: number, counters: TickCounters, now: string): Promise<void> {
     let availableCollateral = collateralBalance;
     const activeManaged = () => Array.from(this.managedOrders.values()).filter(isActiveManagedOrder);
+    const inventoryByToken = new Map(inventorySummary(Array.from(this.managedOrders.values()), this.fills).map((row) => [row.tokenId, row]));
 
     const bundles = groupEligiblePlansByMarket(snapshot.quotePlans);
 
     for (const bundle of bundles) {
+      if (activeManaged().some((order) => order.marketId === bundle.marketId && order.side === 'SELL')) {
+        counters.skippedThisTick += bundle.plans.filter((plan) => plan.eligible).length;
+        this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because an inventory exit SELL order is active.`, {
+          marketId: bundle.marketId,
+          conditionId: bundle.conditionId,
+        });
+        continue;
+      }
+
       const yesPlan = bundle.plans.find((plan) => plan.label === 'YES');
       const noPlan = bundle.plans.find((plan) => plan.label === 'NO');
       if (!yesPlan || !noPlan) {
@@ -187,6 +199,15 @@ export class RewardsExecutionService {
             orderId: comparableOpenOrder?.id ?? existingManagedOrder?.orderId,
             price: comparableOpenOrder?.price ?? existingManagedOrder?.price,
             size: comparableOpenOrder?.size ?? existingManagedOrder?.remainingSize ?? existingManagedOrder?.size,
+            source: 'open_order',
+          });
+        } else if ((inventoryByToken.get(plan.tokenId)?.filledSize ?? 0) > 0) {
+          const inventory = inventoryByToken.get(plan.tokenId)!;
+          existingOrders.push({
+            plan,
+            price: inventory.avgEntryPrice ?? undefined,
+            size: inventory.filledSize,
+            source: 'inventory',
           });
         } else {
           missingPlans.push(plan);
@@ -287,6 +308,97 @@ export class RewardsExecutionService {
     return postedOrderIds;
   }
 
+  private async manageInventoryExits(snapshot: RewardsDashboardState, openOrders: OpenOrderSummary[], counters: TickCounters, now: string): Promise<void> {
+    if (!this.appConfig.rewards.inventoryExitEnabled) return;
+    const activeManaged = Array.from(this.managedOrders.values()).filter(isActiveManagedOrder);
+    const inventoryRows = inventorySummary(Array.from(this.managedOrders.values()), this.fills)
+      .filter((row) => row.filledSize >= this.appConfig.rewards.minInventoryExitShares);
+    const booksByToken = orderbooksByToken(snapshot);
+    const rowsByMarket = new Map<string, RewardInventorySummary[]>();
+    for (const row of inventoryRows) {
+      const rows = rowsByMarket.get(row.marketId) || [];
+      rows.push(row);
+      rowsByMarket.set(row.marketId, rows);
+    }
+
+    for (const row of inventoryRows) {
+      if (activeManaged.some((order) => order.tokenId === row.tokenId && order.side === 'SELL')) continue;
+      const marketRows = rowsByMarket.get(row.marketId) || [];
+      const opposite = marketRows.find((item) => item.label !== row.label);
+      const oppositeOpenBuy = activeManaged
+        .filter((order) => order.marketId === row.marketId && order.label !== row.label && order.side === 'BUY')
+        .reduce((total, order) => total + (order.remainingSize ?? Math.max(order.size - order.filledSize, 0)), 0);
+      const unhedgedSize = roundShares(row.filledSize - ((opposite?.filledSize ?? 0) + oppositeOpenBuy));
+      if (unhedgedSize < this.appConfig.rewards.minInventoryExitShares) continue;
+
+      const oldestFill = oldestBuyFill(this.fills, row.tokenId);
+      const ageSeconds = oldestFill ? (Date.now() - new Date(oldestFill.createdAt).getTime()) / 1000 : 0;
+      const book = booksByToken.get(row.tokenId);
+      const exitPrice = book?.bestBid;
+      if (exitPrice == null || exitPrice <= 0) {
+        this.event('warn', 'skip', `Skipped ${row.label} inventory exit because no current bid is available for ${shortId(row.tokenId)}.`, {
+          marketId: row.marketId,
+          conditionId: row.conditionId,
+          tokenId: row.tokenId,
+          label: row.label,
+          unhedgedSize,
+        });
+        continue;
+      }
+
+      const lossPerShare = row.avgEntryPrice == null ? 0 : Math.max(row.avgEntryPrice - exitPrice, 0);
+      const timedOut = ageSeconds >= this.appConfig.rewards.maxUnhedgedInventoryAgeSeconds;
+      const stopLoss = lossPerShare >= this.appConfig.rewards.maxInventoryLossPerShare;
+      if (!timedOut && !stopLoss) continue;
+
+      const availableShares = await this.client.getAvailableShares(row.tokenId);
+      const exitSize = roundShares(Math.min(unhedgedSize, availableShares));
+      if (exitSize < this.appConfig.rewards.minInventoryExitShares) {
+        this.event('warn', 'skip', `Skipped ${row.label} inventory exit because only ${formatShares(availableShares)} shares are available to sell.`, {
+          marketId: row.marketId,
+          conditionId: row.conditionId,
+          tokenId: row.tokenId,
+          label: row.label,
+          unhedgedSize,
+          availableShares,
+        });
+        continue;
+      }
+
+      const intent = exitIntent(row, exitPrice, exitSize, now, timedOut ? 'unhedged inventory timeout' : 'inventory stop loss');
+      const result = await this.client.executeRewardLimitIntent(intent, { execute: true, orderType: 'GTC' });
+      if (!result.ok || !result.orderId) {
+        counters.skippedThisTick += 1;
+        this.event('error', 'error', `Failed to post ${row.label} SELL exit at ${exitPrice.toFixed(3)}: ${result.error || 'missing order id'}.`, {
+          marketId: row.marketId,
+          conditionId: row.conditionId,
+          tokenId: row.tokenId,
+          label: row.label,
+          exitPrice,
+          exitSize,
+          result,
+        });
+        continue;
+      }
+
+      this.recordPostedOrderFromIntent(intent, result, now);
+      openOrders.push(toOpenOrderSummaryFromIntent(intent, result));
+      counters.postedThisTick += 1;
+      this.event('warn', 'post', `Posted ${row.label} SELL exit at ${exitPrice.toFixed(3)} for ${formatShares(exitSize)} shares because ${timedOut ? `inventory was unhedged for ${Math.round(ageSeconds)}s` : `loss ${lossPerShare.toFixed(3)} exceeded max ${this.appConfig.rewards.maxInventoryLossPerShare.toFixed(3)}`}.`, {
+        marketId: row.marketId,
+        conditionId: row.conditionId,
+        tokenId: row.tokenId,
+        label: row.label,
+        orderId: result.orderId,
+        exitPrice,
+        exitSize,
+        avgEntryPrice: row.avgEntryPrice,
+        lossPerShare,
+        ageSeconds,
+      });
+    }
+  }
+
   private async rollbackPostedOrders(orderIds: string[], counters: TickCounters, now: string): Promise<void> {
     if (!orderIds.length) return;
     await this.client.cancelOrders(orderIds);
@@ -352,20 +464,24 @@ export class RewardsExecutionService {
   }
 
   private recordPostedOrder(plan: RewardQuotePlan, result: LimitOrderResult, now: string): void {
+    this.recordPostedOrderFromIntent(toIntent(plan), result, now);
+  }
+
+  private recordPostedOrderFromIntent(intent: RewardLimitIntent, result: LimitOrderResult, now: string): void {
     if (!result.orderId) return;
     this.managedOrders.set(result.orderId, {
       orderId: result.orderId,
-      planId: plan.id,
-      marketId: plan.marketId,
-      conditionId: plan.conditionId,
-      tokenId: plan.tokenId,
-      label: plan.label,
-      side: plan.side,
-      price: plan.price,
+      planId: intent.id,
+      marketId: intent.marketId,
+      conditionId: intent.conditionId,
+      tokenId: intent.tokenId,
+      label: intent.label,
+      side: intent.side,
+      price: intent.limitPrice,
       size: result.size,
       filledSize: 0,
       remainingSize: result.size,
-      notional: plan.notional,
+      notional: roundMoney(intent.limitPrice * result.size),
       status: 'posted',
       createdAt: now,
       updatedAt: now,
@@ -380,7 +496,8 @@ export class RewardsExecutionService {
   private state(updatedAt: string, counters: TickCounters, collateralBalance: number | undefined, collateralAllowance: number | null | undefined): RewardExecutionState {
     const activeOrders = Array.from(this.managedOrders.values()).filter(isActiveManagedOrder);
     const allOrders = Array.from(this.managedOrders.values());
-    const filledCostBasis = roundMoney(this.fills.reduce((total, fill) => total + fill.notional, 0));
+    const buyFills = this.fills.filter((fill) => fill.side === 'BUY');
+    const filledCostBasis = roundMoney(buyFills.reduce((total, fill) => total + fill.notional, 0));
     return {
       mode: this.appConfig.executionMode,
       enabled: this.appConfig.executionMode === 'live',
@@ -396,7 +513,7 @@ export class RewardsExecutionService {
       totals: {
         activeOrders: activeOrders.length,
         activeNotional: roundMoney(activeOrders.reduce((total, order) => total + order.price * (order.remainingSize ?? order.size), 0)),
-        filledSize: roundShares(this.fills.reduce((total, fill) => total + fill.size, 0)),
+        filledSize: roundShares(buyFills.reduce((total, fill) => total + fill.size, 0)),
         filledCostBasis,
         postedThisTick: counters.postedThisTick,
         cancelledThisTick: counters.cancelledThisTick,
@@ -560,16 +677,52 @@ function toIntent(plan: RewardQuotePlan): RewardLimitIntent {
 }
 
 function toOpenOrderSummary(plan: RewardQuotePlan, result: LimitOrderResult): OpenOrderSummary {
+  return toOpenOrderSummaryFromIntent(toIntent(plan), result);
+}
+
+function toOpenOrderSummaryFromIntent(intent: RewardLimitIntent, result: LimitOrderResult): OpenOrderSummary {
   return {
     id: result.orderId || '',
-    tokenId: plan.tokenId,
-    side: plan.side,
+    tokenId: intent.tokenId,
+    side: intent.side,
     price: result.price,
     size: result.size,
     sizeMatched: 0,
     status: 'posted',
     raw: result.raw,
   };
+}
+
+function exitIntent(row: RewardInventorySummary, price: number, shares: number, createdAt: string, reason: string): RewardLimitIntent {
+  return {
+    id: `${row.marketId}:${row.label}:SELL:${createdAt}`,
+    marketId: row.marketId,
+    conditionId: row.conditionId,
+    tokenId: row.tokenId,
+    label: row.label,
+    side: 'SELL',
+    limitPrice: roundPrice(price),
+    shares: roundShares(shares),
+    reason,
+    createdAt,
+  };
+}
+
+function orderbooksByToken(snapshot: RewardsDashboardState): Map<string, { bestBid: number | null; bestAsk: number | null }> {
+  const books = new Map<string, { bestBid: number | null; bestAsk: number | null }>();
+  for (const market of snapshot.candidates) {
+    for (const book of [market.yesOrderbook, market.noOrderbook]) {
+      if (!book) continue;
+      books.set(book.tokenId, { bestBid: book.bestBid, bestAsk: book.bestAsk });
+    }
+  }
+  return books;
+}
+
+function oldestBuyFill(fills: RewardFillRecord[], tokenId: string): RewardFillRecord | undefined {
+  return fills
+    .filter((fill) => fill.tokenId === tokenId && fill.side === 'BUY')
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
 }
 
 function remainingOrderSize(order: OpenOrderSummary): number | null {
@@ -633,14 +786,15 @@ function inventorySummary(orders: RewardManagedOrder[], fills: RewardFillRecord[
       avgEntryPrice: null,
       costBasis: 0,
     };
-    existing.filledSize = roundShares(existing.filledSize + fill.size);
-    existing.costBasis = roundMoney(existing.costBasis + fill.notional);
+    const sign = fill.side === 'SELL' ? -1 : 1;
+    existing.filledSize = roundShares(Math.max(existing.filledSize + sign * fill.size, 0));
+    existing.costBasis = roundMoney(Math.max(existing.costBasis + sign * fill.notional, 0));
     existing.avgEntryPrice = existing.filledSize > 0 ? roundPrice(existing.costBasis / existing.filledSize) : null;
     if (order?.conditionId && !existing.conditionId) existing.conditionId = order.conditionId;
     rows.set(key, existing);
   }
 
-  for (const order of orders.filter(isActiveManagedOrder)) {
+  for (const order of orders.filter((order) => isActiveManagedOrder(order) && order.side === 'BUY')) {
     const existing = rows.get(order.tokenId) || {
       tokenId: order.tokenId,
       label: order.label,

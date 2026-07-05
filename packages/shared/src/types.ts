@@ -83,7 +83,7 @@ export type RewardQuotePlan = {
   conditionId?: string;
   tokenId: string;
   label: 'YES' | 'NO';
-  side: 'BUY';
+  side: TradeSide;
   price: number;
   size: number;
   notional: number;
@@ -109,6 +109,10 @@ export type RewardsRuntimeConfig = {
   maxOrderHardAgeSeconds: number;
   maxOrderbookAgeSeconds: number;
   maxInventorySharesPerOutcome: number;
+  inventoryExitEnabled: boolean;
+  maxUnhedgedInventoryAgeSeconds: number;
+  maxInventoryLossPerShare: number;
+  minInventoryExitShares: number;
   minCollateralBalance: number;
   maxActiveOrdersPerMarket: number;
   blockedCategories: string[];
@@ -122,7 +126,7 @@ export type RewardManagedOrder = {
   conditionId?: string;
   tokenId: string;
   label: 'YES' | 'NO';
-  side: 'BUY';
+  side: TradeSide;
   price: number;
   size: number;
   filledSize: number;
@@ -154,7 +158,7 @@ export type RewardFillRecord = {
   conditionId?: string;
   tokenId: string;
   label: 'YES' | 'NO';
-  side: 'BUY';
+  side: TradeSide;
   price: number;
   size: number;
   notional: number;
