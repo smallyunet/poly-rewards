@@ -33,6 +33,19 @@ type CancelReason = {
   staleOrderbook: boolean;
 };
 
+type MarketPlanBundle = {
+  marketId: string;
+  conditionId?: string;
+  plans: RewardQuotePlan[];
+};
+
+type ExistingOrderMatch = {
+  plan: RewardQuotePlan;
+  orderId?: string;
+  price?: number;
+  size?: number | null;
+};
+
 const ACTIVE_ORDER_STATUSES = new Set(['', 'open', 'live', 'matched', 'partially_filled', 'posted']);
 const MAX_PERSISTED_RECORDS = 500;
 
@@ -148,80 +161,144 @@ export class RewardsExecutionService {
     let availableCollateral = collateralBalance;
     const activeManaged = () => Array.from(this.managedOrders.values()).filter(isActiveManagedOrder);
 
-    const eligiblePlans = snapshot.quotePlans
-      .filter((item) => item.eligible)
-      .sort((a, b) => a.notional - b.notional);
+    const bundles = groupEligiblePlansByMarket(snapshot.quotePlans);
 
-    for (const plan of eligiblePlans) {
-      if (availableCollateral - plan.notional < this.appConfig.rewards.minCollateralBalance) {
+    for (const bundle of bundles) {
+      const yesPlan = bundle.plans.find((plan) => plan.label === 'YES');
+      const noPlan = bundle.plans.find((plan) => plan.label === 'NO');
+      if (!yesPlan || !noPlan) {
+        counters.skippedThisTick += bundle.plans.length;
+        this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because reward market making requires both YES and NO eligible quote plans.`, {
+          marketId: bundle.marketId,
+          conditionId: bundle.conditionId,
+          labels: bundle.plans.map((plan) => plan.label),
+        });
+        continue;
+      }
+
+      const existingOrders: ExistingOrderMatch[] = [];
+      const missingPlans: RewardQuotePlan[] = [];
+      for (const plan of [yesPlan, noPlan]) {
+        const comparableOpenOrder = findComparableOpenOrder(plan, openOrders);
+        const existingManagedOrder = activeManaged().find((order) => order.tokenId === plan.tokenId && order.side === plan.side);
+        if (comparableOpenOrder || existingManagedOrder) {
+          existingOrders.push({
+            plan,
+            orderId: comparableOpenOrder?.id ?? existingManagedOrder?.orderId,
+            price: comparableOpenOrder?.price ?? existingManagedOrder?.price,
+            size: comparableOpenOrder?.size ?? existingManagedOrder?.remainingSize ?? existingManagedOrder?.size,
+          });
+        } else {
+          missingPlans.push(plan);
+        }
+      }
+
+      if (!missingPlans.length) {
+        counters.skippedThisTick += 2;
+        this.event('info', 'skip', `Skipped market ${shortId(bundle.marketId)} because both YES and NO already have open BUY orders.`, {
+          marketId: bundle.marketId,
+          conditionId: bundle.conditionId,
+          existingOrders: existingOrders.map((item) => existingOrderDetails(item)),
+        });
+        continue;
+      }
+
+      const requiredCollateral = roundMoney(sum(missingPlans.map((plan) => plan.notional)));
+      if (availableCollateral - requiredCollateral < this.appConfig.rewards.minCollateralBalance) {
         const spendableCollateral = Math.max(availableCollateral - this.appConfig.rewards.minCollateralBalance, 0);
-        counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because it needs ${formatUsd(plan.notional)} but only ${formatUsd(spendableCollateral)} is spendable (${formatUsd(availableCollateral)} balance, ${formatUsd(this.appConfig.rewards.minCollateralBalance)} reserve).`, {
-          ...planEventDetails(plan),
+        counters.skippedThisTick += missingPlans.length;
+        this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because YES+NO needs ${formatUsd(requiredCollateral)} but only ${formatUsd(spendableCollateral)} is spendable (${formatUsd(availableCollateral)} balance, ${formatUsd(this.appConfig.rewards.minCollateralBalance)} reserve).`, {
+          marketId: bundle.marketId,
+          conditionId: bundle.conditionId,
+          missingPlans: missingPlans.map(planEventDetails),
+          existingOrders: existingOrders.map((item) => existingOrderDetails(item)),
           collateralBalance: availableCollateral,
-          requiredCollateral: plan.notional,
+          requiredCollateral,
           spendableCollateral,
           minCollateralBalance: this.appConfig.rewards.minCollateralBalance,
         });
         continue;
       }
 
-      const activeOrdersForMarket = activeManaged().filter((order) => order.marketId === plan.marketId).length;
-      if (activeOrdersForMarket >= this.appConfig.rewards.maxActiveOrdersPerMarket) {
-        counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because this market already has ${activeOrdersForMarket}/${this.appConfig.rewards.maxActiveOrdersPerMarket} active managed orders.`, {
-          ...planEventDetails(plan),
+      const activeOrdersForMarket = activeManaged().filter((order) => order.marketId === bundle.marketId).length;
+      if (activeOrdersForMarket + missingPlans.length > this.appConfig.rewards.maxActiveOrdersPerMarket) {
+        counters.skippedThisTick += missingPlans.length;
+        this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because posting YES+NO would require ${activeOrdersForMarket + missingPlans.length}/${this.appConfig.rewards.maxActiveOrdersPerMarket} active managed orders.`, {
+          marketId: bundle.marketId,
+          conditionId: bundle.conditionId,
+          missingPlans: missingPlans.map(planEventDetails),
           activeOrdersForMarket,
+          requiredNewOrders: missingPlans.length,
           maxActiveOrdersPerMarket: this.appConfig.rewards.maxActiveOrdersPerMarket,
         });
         continue;
       }
 
-      const comparableOpenOrder = findComparableOpenOrder(plan, openOrders);
-      const existingManagedOrder = activeManaged().find((order) => order.tokenId === plan.tokenId && order.side === plan.side);
-      if (comparableOpenOrder || existingManagedOrder) {
-        counters.skippedThisTick += 1;
-        const existingSize = comparableOpenOrder?.size ?? existingManagedOrder?.remainingSize ?? existingManagedOrder?.size;
-        const existingPrice = comparableOpenOrder?.price ?? existingManagedOrder?.price;
-        this.event('info', 'skip', `Skipped ${plan.label} quote because token ${shortId(plan.tokenId)} already has an open ${plan.side} order${existingPrice == null ? '' : ` at ${existingPrice.toFixed(3)}`}${existingSize == null ? '' : ` for ${formatShares(existingSize)} shares`}.`, {
-          ...planEventDetails(plan),
-          existingOrderId: comparableOpenOrder?.id ?? existingManagedOrder?.orderId,
-          existingPrice,
-          existingSize,
-        });
-        continue;
+      let blockedByInventory = false;
+      for (const plan of missingPlans) {
+        const inventory = await this.client.getAvailableShares(plan.tokenId);
+        if (inventory + plan.size > this.appConfig.rewards.maxInventorySharesPerOutcome) {
+          blockedByInventory = true;
+          counters.skippedThisTick += missingPlans.length;
+          this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because ${plan.label} inventory would become ${formatShares(inventory + plan.size)} shares, above the ${formatShares(this.appConfig.rewards.maxInventorySharesPerOutcome)} cap (${formatShares(inventory)} current + ${formatShares(plan.size)} planned).`, {
+            marketId: bundle.marketId,
+            conditionId: bundle.conditionId,
+            blockedPlan: planEventDetails(plan),
+            missingPlans: missingPlans.map(planEventDetails),
+            inventory,
+            plannedSize: plan.size,
+            projectedInventory: roundShares(inventory + plan.size),
+            maxInventorySharesPerOutcome: this.appConfig.rewards.maxInventorySharesPerOutcome,
+          });
+          break;
+        }
       }
+      if (blockedByInventory) continue;
 
-      const inventory = await this.client.getAvailableShares(plan.tokenId);
-      if (inventory + plan.size > this.appConfig.rewards.maxInventorySharesPerOutcome) {
-        counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because inventory would become ${formatShares(inventory + plan.size)} shares, above the ${formatShares(this.appConfig.rewards.maxInventorySharesPerOutcome)} cap (${formatShares(inventory)} current + ${formatShares(plan.size)} planned).`, {
-          ...planEventDetails(plan),
-          inventory,
-          plannedSize: plan.size,
-          projectedInventory: roundShares(inventory + plan.size),
-          maxInventorySharesPerOutcome: this.appConfig.rewards.maxInventorySharesPerOutcome,
-        });
-        continue;
-      }
+      const postedOrderIds = await this.postMarketBundle(bundle, missingPlans, openOrders, counters, now);
+      if (postedOrderIds.length === missingPlans.length) availableCollateral -= requiredCollateral;
+    }
+  }
 
+  private async postMarketBundle(bundle: MarketPlanBundle, missingPlans: RewardQuotePlan[], openOrders: OpenOrderSummary[], counters: TickCounters, now: string): Promise<string[]> {
+    const postedOrderIds: string[] = [];
+    for (const plan of missingPlans) {
       const result = await this.client.executeRewardLimitIntent(toIntent(plan), { execute: true, orderType: 'GTC' });
       if (!result.ok || !result.orderId) {
-        counters.skippedThisTick += 1;
-        this.event('error', 'error', `Failed to post ${plan.label} quote: ${result.error || 'missing order id'}.`, {
+        counters.skippedThisTick += missingPlans.length - postedOrderIds.length;
+        this.event('error', 'error', `Failed to post ${plan.label} quote for market ${shortId(bundle.marketId)}: ${result.error || 'missing order id'}. Rolling back ${postedOrderIds.length} newly posted order(s).`, {
           ...planEventDetails(plan),
           result,
+          postedOrderIds,
         });
-        continue;
+        await this.rollbackPostedOrders(postedOrderIds, counters, now);
+        return [];
       }
 
       this.recordPostedOrder(plan, result, now);
       openOrders.push(toOpenOrderSummary(plan, result));
-      availableCollateral -= plan.notional;
+      postedOrderIds.push(result.orderId);
       counters.postedThisTick += 1;
       this.event('info', 'post', `Posted ${plan.label} BUY quote at ${plan.price.toFixed(3)}.`, {
         ...planEventDetails(plan),
         orderId: result.orderId,
+      });
+    }
+    return postedOrderIds;
+  }
+
+  private async rollbackPostedOrders(orderIds: string[], counters: TickCounters, now: string): Promise<void> {
+    if (!orderIds.length) return;
+    await this.client.cancelOrders(orderIds);
+    counters.cancelledThisTick += orderIds.length;
+    for (const orderId of orderIds) {
+      const order = this.managedOrders.get(orderId);
+      if (!order) continue;
+      this.managedOrders.set(orderId, { ...order, status: 'cancelled', remainingSize: 0, updatedAt: now });
+      this.event('warn', 'cancel', `Cancelled newly posted managed order ${shortId(orderId)} because its YES+NO bundle did not complete.`, {
+        orderId,
+        marketId: order.marketId,
+        tokenId: order.tokenId,
       });
     }
   }
@@ -454,6 +531,19 @@ function findComparableOpenOrder(plan: RewardQuotePlan, openOrders: OpenOrderSum
   ));
 }
 
+function groupEligiblePlansByMarket(plans: RewardQuotePlan[]): MarketPlanBundle[] {
+  const byMarket = new Map<string, MarketPlanBundle>();
+  for (const plan of plans.filter((item) => item.eligible)) {
+    const existing = byMarket.get(plan.marketId);
+    if (existing) {
+      existing.plans.push(plan);
+    } else {
+      byMarket.set(plan.marketId, { marketId: plan.marketId, conditionId: plan.conditionId, plans: [plan] });
+    }
+  }
+  return Array.from(byMarket.values()).sort((a, b) => sum(a.plans.map((plan) => plan.notional)) - sum(b.plans.map((plan) => plan.notional)));
+}
+
 function toIntent(plan: RewardQuotePlan): RewardLimitIntent {
   return {
     id: plan.id,
@@ -513,6 +603,16 @@ function planEventDetails(plan: RewardQuotePlan): { marketId: string; conditionI
   };
 }
 
+function existingOrderDetails(match: ExistingOrderMatch): { label: string; tokenId: string; orderId?: string; price?: number; size?: number | null } {
+  return {
+    label: match.plan.label,
+    tokenId: match.plan.tokenId,
+    orderId: match.orderId,
+    price: match.price,
+    size: match.size,
+  };
+}
+
 function isPlanDetails(value: unknown): value is { marketId?: string; tokenId?: string; orderId?: string } {
   return Boolean(value && typeof value === 'object');
 }
@@ -566,6 +666,10 @@ function inferredFilledSize(order: Partial<RewardManagedOrder>): number {
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function sum(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0);
 }
 
 function roundShares(value: number): number {

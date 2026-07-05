@@ -41,7 +41,7 @@ test('live execution posts eligible quotes after reconciliation guards pass', as
   assert.deepEqual(client.posted.map((intent) => intent.label).sort(), ['NO', 'YES']);
 });
 
-test('live execution picks affordable plans instead of stopping on larger plans', async () => {
+test('live execution only posts complete affordable YES/NO market bundles', async () => {
   const config = testConfig({
     executionMode: 'live',
     ownerPrivateKey: '0xabc',
@@ -51,17 +51,19 @@ test('live execution picks affordable plans instead of stopping on larger plans'
   const client = fakeClient({ collateralBalance: 5 });
   const snapshot = testSnapshot();
   snapshot.quotePlans = [
-    { ...snapshot.quotePlans[1], id: 'large-plan', label: 'NO', tokenId: 'large-token', price: 0.9, size: 10, notional: 9 },
-    { ...snapshot.quotePlans[0], id: 'small-plan', label: 'YES', tokenId: 'small-token', price: 0.4, size: 5, notional: 2 },
+    { ...snapshot.quotePlans[0], id: 'large-yes', marketId: 'large-market', label: 'YES', tokenId: 'large-yes-token', price: 0.4, size: 10, notional: 4 },
+    { ...snapshot.quotePlans[1], id: 'large-no', marketId: 'large-market', label: 'NO', tokenId: 'large-no-token', price: 0.4, size: 10, notional: 4 },
+    { ...snapshot.quotePlans[0], id: 'small-yes', marketId: 'small-market', label: 'YES', tokenId: 'small-yes-token', price: 0.4, size: 5, notional: 2 },
+    { ...snapshot.quotePlans[1], id: 'small-no', marketId: 'small-market', label: 'NO', tokenId: 'small-no-token', price: 0.4, size: 5, notional: 2 },
   ];
   const execution = new RewardsExecutionService(config, client);
 
   const state = await execution.reconcile(snapshot);
 
-  assert.equal(state.totals.postedThisTick, 1);
-  assert.equal(state.totals.skippedThisTick, 1);
-  assert.deepEqual(client.posted.map((intent) => intent.id), ['small-plan']);
-  assert.match(skipEventMessage(state, 'needs $9.00'), /needs \$9\.00 but only \$3\.00 is spendable/);
+  assert.equal(state.totals.postedThisTick, 2);
+  assert.equal(state.totals.skippedThisTick, 2);
+  assert.deepEqual(client.posted.map((intent) => intent.id).sort(), ['small-no', 'small-yes']);
+  assert.match(skipEventMessage(state, 'YES+NO needs $8.00'), /only \$1\.00 is spendable/);
 });
 
 test('live execution skips when an external open order already exists on a token', async () => {
@@ -87,9 +89,8 @@ test('live execution skips when an external open order already exists on a token
   const state = await execution.reconcile(testSnapshot());
 
   assert.equal(state.totals.postedThisTick, 1);
-  assert.equal(state.totals.skippedThisTick, 1);
+  assert.equal(state.totals.skippedThisTick, 0);
   assert.deepEqual(client.posted.map((intent) => intent.label), ['NO']);
-  assert.match(skipEventMessage(state, 'already has an open BUY order'), /already has an open BUY order at 0\.485 for 5\.00 shares/);
 });
 
 test('live execution skip events include inventory cap numbers', async () => {
@@ -108,6 +109,46 @@ test('live execution skip events include inventory cap numbers', async () => {
   assert.equal(state.totals.skippedThisTick, 2);
   assert.match(skipEventMessage(state, 'inventory would become'), /inventory would become 9\.00 shares, above the 7\.00 cap \(4\.00 current \+ 5\.00 planned\)/);
 });
+
+test('live execution rolls back a market bundle when one side fails to post', async () => {
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+  });
+  const client = fakeClient({ failLabels: ['NO'] });
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(testSnapshot());
+
+  assert.equal(state.totals.postedThisTick, 1);
+  assert.equal(state.totals.cancelledThisTick, 1);
+  assert.equal(state.totals.skippedThisTick, 1);
+  assert.equal(state.totals.activeOrders, 0);
+  assert.equal(client.calls.cancel, 1);
+  assert.deepEqual(client.posted.map((intent) => intent.label), ['YES']);
+  assert.match(state.recentEvents[0].message, /bundle did not complete/);
+});
+
+test('live execution skips one-sided quote plan groups', async () => {
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+  });
+  const snapshot = testSnapshot();
+  snapshot.quotePlans = [snapshot.quotePlans[0]];
+  const client = fakeClient();
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(snapshot);
+
+  assert.equal(state.totals.postedThisTick, 0);
+  assert.equal(state.totals.skippedThisTick, 1);
+  assert.equal(client.calls.post, 0);
+  assert.match(skipEventMessage(state, 'requires both YES and NO'), /requires both YES and NO eligible quote plans/);
+});
+
 
 test('execution state persists and restores managed orders across service instances', async () => {
   const runtimeStatePath = tempStatePath();
@@ -333,7 +374,7 @@ function testSnapshot(): RewardsDashboardState {
   };
 }
 
-function fakeClient(options: { openOrders?: any[]; collateralBalance?: number; inventory?: number } = {}) {
+function fakeClient(options: { openOrders?: any[]; collateralBalance?: number; inventory?: number; failLabels?: string[] } = {}) {
   const calls = {
     openOrders: 0,
     collateral: 0,
@@ -359,6 +400,7 @@ function fakeClient(options: { openOrders?: any[]; collateralBalance?: number; i
     },
     async executeRewardLimitIntent(intent: any) {
       calls.post += 1;
+      if (options.failLabels?.includes(intent.label)) return { ok: false, error: `failed ${intent.label}` };
       posted.push(intent);
       return { ok: true, orderId: `order-${intent.label}`, price: intent.limitPrice, size: intent.shares, raw: {} };
     },
