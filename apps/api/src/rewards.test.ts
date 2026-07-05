@@ -158,6 +158,62 @@ test('scanner ranks actionable capital-fit markets before high-reward blocked ma
   }
 });
 
+test('low-probability reward markets surface quote price and capital blockers', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  process.env.REWARDS_BLOCKED_CATEGORIES = '';
+  process.env.REWARDS_BLOCKED_KEYWORDS = '';
+  process.env.REWARDS_MIN_SECONDS_TO_CLOSE = '3600';
+  process.env.REWARDS_MARKET_MAX_NOTIONAL = '10';
+  process.env.REWARDS_GLOBAL_MAX_NOTIONAL = '100';
+
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/rewards/markets/current')) {
+      return jsonResponse([
+        {
+          id: 'long-shot-market',
+          condition_id: '0xlongshot',
+          question: 'Will a long shot happen?',
+          category: 'sports',
+          active: true,
+          closed: false,
+          accepting_orders: true,
+          daily_reward: 13,
+          min_incentive_size: 20,
+          max_incentive_spread: 4.5,
+          market_competitiveness: 1,
+          end_date_iso: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+          tokens: [
+            { outcome: 'Yes', token_id: 'yes-long-shot' },
+            { outcome: 'No', token_id: 'no-long-shot' },
+          ],
+        },
+      ]);
+    }
+    if (url.includes('/book?token_id=yes-long-shot')) {
+      return jsonResponse({ bids: [{ price: '0.01', size: '100' }], asks: [{ price: '0.05', size: '100' }] });
+    }
+    if (url.includes('/book?token_id=no-long-shot')) {
+      return jsonResponse({ bids: [{ price: '0.95', size: '100' }], asks: [{ price: '0.99', size: '100' }] });
+    }
+    return jsonResponse([]);
+  }) as typeof fetch;
+
+  try {
+    const state = await runRewardsTick(loadRewardsAppConfig());
+    assert.equal(state.quotePlans.length, 0);
+    assert.deepEqual(state.candidates[0].rejectReasons, [
+      'reward-sized quote is outside price or incentive-spread limits',
+      'minimum reward-sized quote exceeds per-market notional cap',
+    ]);
+    assert.equal(state.candidates[0].estimatedRequiredCapital, 19.2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+  }
+});
+
 function marketFixture(id: string, question: string, dailyReward: number, minSize: number) {
   return {
     id,

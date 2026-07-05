@@ -86,9 +86,11 @@ async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagn
   ]);
   const adjustedMidpoint = adjustedMidpointFromBooks(yesOrderbook, noOrderbook);
   const marketSpread = yesOrderbook?.spread ?? null;
-  const estimatedRequiredCapital = estimatedTwoSidedCapital(appConfig, adjustedMidpoint, marketSpread, minSize);
+  const quotePreview = previewRewardQuote(appConfig, adjustedMidpoint, marketSpread, normalizeSpread(maxSpread), minSize);
+  const estimatedRequiredCapital = quotePreview?.notional ?? minSize;
   const riskTags = riskTagsFor(appConfig, { question, category, endDate, dailyReward, minSize, maxSpread, competitiveness, yesOrderbook, noOrderbook });
   const rejectReasons = rejectReasonsFor(appConfig, { active, closed, acceptingOrders, dailyReward, minSize, maxSpread, endDate, tokens, yesOrderbook, noOrderbook, question, category });
+  if (quotePreview && !quotePreview.eligible) rejectReasons.push('reward-sized quote is outside price or incentive-spread limits');
   if (estimatedRequiredCapital > appConfig.rewards.maxMarketNotional) rejectReasons.push('minimum reward-sized quote exceeds per-market notional cap');
   if (estimatedRequiredCapital > appConfig.rewards.maxGlobalNotional) rejectReasons.push('minimum reward-sized quote exceeds global notional cap');
   const rewardScore = dailyReward > 0 ? dailyReward / Math.max(estimatedRequiredCapital, 1) / Math.max(competitiveness ?? 1, 1) : 0;
@@ -341,15 +343,17 @@ function isActionableCandidate(candidate: RewardMarketCandidate): boolean {
   return candidate.rejectReasons.length === 0 && candidate.adjustedMidpoint != null;
 }
 
-function estimatedTwoSidedCapital(appConfig: RewardsAppConfig, midpoint: number | null, marketSpread: number | null, shares: number): number {
-  if (midpoint == null) return shares;
+function previewRewardQuote(appConfig: RewardsAppConfig, midpoint: number | null, marketSpread: number | null, maxSpread: number, shares: number): { yesPrice: number; noPrice: number; notional: number; eligible: boolean } | null {
+  if (midpoint == null) return null;
   const offset = Math.max(appConfig.rewards.quoteOffset, (marketSpread ?? 0) / 2);
   const yesPrice = roundPrice(midpoint - offset);
   const noPrice = roundPrice(1 - midpoint - offset);
-  if (yesPrice <= 0.01 || yesPrice >= 0.99 || noPrice <= 0.01 || noPrice >= 0.99) {
-    return shares * Math.max(midpoint, 0.01) * 2;
-  }
-  return shares * (yesPrice + noPrice);
+  return {
+    yesPrice,
+    noPrice,
+    notional: roundMoney(shares * (yesPrice + noPrice)),
+    eligible: yesPrice > 0.01 && yesPrice < 0.99 && noPrice > 0.01 && noPrice < 0.99 && offset <= Math.max(maxSpread, 0),
+  };
 }
 
 function adjustedMidpointFromBooks(yes?: RewardOrderbookSummary, no?: RewardOrderbookSummary): number | null {
