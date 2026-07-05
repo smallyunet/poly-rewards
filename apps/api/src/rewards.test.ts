@@ -94,10 +94,10 @@ test('quote planner sizes orders from market reward min size', async () => {
       ]);
     }
     if (url.includes('/book?token_id=yes-token')) {
-      return jsonResponse({ bids: [{ price: '0.49', size: '100' }], asks: [{ price: '0.51', size: '100' }] });
+      return jsonResponse({ bids: [{ price: '0.49', size: '250' }], asks: [{ price: '0.51', size: '100' }] });
     }
     if (url.includes('/book?token_id=no-token')) {
-      return jsonResponse({ bids: [{ price: '0.48', size: '100' }], asks: [{ price: '0.52', size: '100' }] });
+      return jsonResponse({ bids: [{ price: '0.48', size: '250' }], asks: [{ price: '0.52', size: '100' }] });
     }
     return jsonResponse([]);
   }) as typeof fetch;

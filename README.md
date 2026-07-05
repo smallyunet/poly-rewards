@@ -87,6 +87,9 @@ REWARDS_MAX_ORDER_AGE_SECONDS=600
 REWARDS_MAX_ORDER_HARD_AGE_SECONDS=1800
 REWARDS_MAX_ORDERBOOK_AGE_SECONDS=5
 REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME=20
+REWARDS_MAX_QUEUE_SHARE=0.25
+REWARDS_MIN_SIDE_DEPTH_MULTIPLIER=4
+REWARDS_MIN_ASK_DEPTH_MULTIPLIER=1
 REWARDS_INVENTORY_EXIT_ENABLED=true
 REWARDS_MAX_UNHEDGED_INVENTORY_AGE_SECONDS=600
 REWARDS_MAX_INVENTORY_LOSS_PER_SHARE=0.05
@@ -106,6 +109,12 @@ long hard-refresh age is reached.
 For markets with active quote plans or active managed orders, the worker
 subscribes to Polymarket's public market WebSocket and uses live orderbook
 updates before falling back to REST snapshots.
+
+Reward-sized quotes also require enough visible depth on both outcomes. A market
+is rejected unless each planned side has bid depth of at least
+`REWARDS_MIN_SIDE_DEPTH_MULTIPLIER * planSize`, the plan size is no more than
+`REWARDS_MAX_QUEUE_SHARE` of bid depth, and ask depth is at least
+`REWARDS_MIN_ASK_DEPTH_MULTIPLIER * planSize`.
 
 Execution is market-bundle first: YES and NO reward quotes must both be eligible
 and affordable before new orders are posted. If one side is already filled or
