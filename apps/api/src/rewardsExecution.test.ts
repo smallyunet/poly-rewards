@@ -61,6 +61,7 @@ test('live execution picks affordable plans instead of stopping on larger plans'
   assert.equal(state.totals.postedThisTick, 1);
   assert.equal(state.totals.skippedThisTick, 1);
   assert.deepEqual(client.posted.map((intent) => intent.id), ['small-plan']);
+  assert.match(skipEventMessage(state, 'needs $9.00'), /needs \$9\.00 but only \$3\.00 is spendable/);
 });
 
 test('live execution skips when an external open order already exists on a token', async () => {
@@ -88,6 +89,24 @@ test('live execution skips when an external open order already exists on a token
   assert.equal(state.totals.postedThisTick, 1);
   assert.equal(state.totals.skippedThisTick, 1);
   assert.deepEqual(client.posted.map((intent) => intent.label), ['NO']);
+  assert.match(skipEventMessage(state, 'already has an open BUY order'), /already has an open BUY order at 0\.485 for 5\.00 shares/);
+});
+
+test('live execution skip events include inventory cap numbers', async () => {
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    rewards: { maxInventorySharesPerOutcome: 7 },
+  });
+  const client = fakeClient({ inventory: 4 });
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(testSnapshot());
+
+  assert.equal(state.totals.postedThisTick, 0);
+  assert.equal(state.totals.skippedThisTick, 2);
+  assert.match(skipEventMessage(state, 'inventory would become'), /inventory would become 9\.00 shares, above the 7\.00 cap \(4\.00 current \+ 5\.00 planned\)/);
 });
 
 test('execution state persists and restores managed orders across service instances', async () => {
@@ -203,6 +222,12 @@ function tempStatePath(): string {
   return path.join(os.tmpdir(), `poly-rewards-execution-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
 }
 
+function skipEventMessage(state: Awaited<ReturnType<RewardsExecutionService['reconcile']>>, text: string): string {
+  const event = state.recentEvents.find((item) => item.action === 'skip' && item.message.includes(text));
+  assert.ok(event, `expected skip event containing "${text}"`);
+  return event.message;
+}
+
 function testSnapshot(): RewardsDashboardState {
   const now = new Date().toISOString();
   return {
@@ -283,7 +308,7 @@ function testSnapshot(): RewardsDashboardState {
   };
 }
 
-function fakeClient(options: { openOrders?: any[]; collateralBalance?: number } = {}) {
+function fakeClient(options: { openOrders?: any[]; collateralBalance?: number; inventory?: number } = {}) {
   const calls = {
     openOrders: 0,
     collateral: 0,
@@ -305,7 +330,7 @@ function fakeClient(options: { openOrders?: any[]; collateralBalance?: number } 
     },
     async getAvailableShares() {
       calls.shares += 1;
-      return 0;
+      return options.inventory ?? 0;
     },
     async executeRewardLimitIntent(intent: any) {
       calls.post += 1;

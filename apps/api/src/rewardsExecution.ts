@@ -132,33 +132,52 @@ export class RewardsExecutionService {
 
     for (const plan of eligiblePlans) {
       if (availableCollateral - plan.notional < this.appConfig.rewards.minCollateralBalance) {
+        const spendableCollateral = Math.max(availableCollateral - this.appConfig.rewards.minCollateralBalance, 0);
         counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because available collateral cannot cover this plan.`, {
+        this.event('warn', 'skip', `Skipped ${plan.label} quote because it needs ${formatUsd(plan.notional)} but only ${formatUsd(spendableCollateral)} is spendable (${formatUsd(availableCollateral)} balance, ${formatUsd(this.appConfig.rewards.minCollateralBalance)} reserve).`, {
           ...planEventDetails(plan),
           collateralBalance: availableCollateral,
+          requiredCollateral: plan.notional,
+          spendableCollateral,
           minCollateralBalance: this.appConfig.rewards.minCollateralBalance,
         });
         continue;
       }
 
-      if (activeManaged().filter((order) => order.marketId === plan.marketId).length >= this.appConfig.rewards.maxActiveOrdersPerMarket) {
+      const activeOrdersForMarket = activeManaged().filter((order) => order.marketId === plan.marketId).length;
+      if (activeOrdersForMarket >= this.appConfig.rewards.maxActiveOrdersPerMarket) {
         counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because the market already has the maximum active managed orders.`, planEventDetails(plan));
+        this.event('warn', 'skip', `Skipped ${plan.label} quote because this market already has ${activeOrdersForMarket}/${this.appConfig.rewards.maxActiveOrdersPerMarket} active managed orders.`, {
+          ...planEventDetails(plan),
+          activeOrdersForMarket,
+          maxActiveOrdersPerMarket: this.appConfig.rewards.maxActiveOrdersPerMarket,
+        });
         continue;
       }
 
-      if (hasComparableOpenOrder(plan, openOrders) || activeManaged().some((order) => order.tokenId === plan.tokenId && order.side === plan.side)) {
+      const comparableOpenOrder = findComparableOpenOrder(plan, openOrders);
+      const existingManagedOrder = activeManaged().find((order) => order.tokenId === plan.tokenId && order.side === plan.side);
+      if (comparableOpenOrder || existingManagedOrder) {
         counters.skippedThisTick += 1;
-        this.event('info', 'skip', `Skipped ${plan.label} quote because an open order already exists on this token.`, planEventDetails(plan));
+        const existingSize = comparableOpenOrder?.size ?? existingManagedOrder?.remainingSize ?? existingManagedOrder?.size;
+        const existingPrice = comparableOpenOrder?.price ?? existingManagedOrder?.price;
+        this.event('info', 'skip', `Skipped ${plan.label} quote because token ${shortId(plan.tokenId)} already has an open ${plan.side} order${existingPrice == null ? '' : ` at ${existingPrice.toFixed(3)}`}${existingSize == null ? '' : ` for ${formatShares(existingSize)} shares`}.`, {
+          ...planEventDetails(plan),
+          existingOrderId: comparableOpenOrder?.id ?? existingManagedOrder?.orderId,
+          existingPrice,
+          existingSize,
+        });
         continue;
       }
 
       const inventory = await this.client.getAvailableShares(plan.tokenId);
       if (inventory + plan.size > this.appConfig.rewards.maxInventorySharesPerOutcome) {
         counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because outcome inventory would exceed the configured cap.`, {
+        this.event('warn', 'skip', `Skipped ${plan.label} quote because inventory would become ${formatShares(inventory + plan.size)} shares, above the ${formatShares(this.appConfig.rewards.maxInventorySharesPerOutcome)} cap (${formatShares(inventory)} current + ${formatShares(plan.size)} planned).`, {
           ...planEventDetails(plan),
           inventory,
+          plannedSize: plan.size,
+          projectedInventory: roundShares(inventory + plan.size),
           maxInventorySharesPerOutcome: this.appConfig.rewards.maxInventorySharesPerOutcome,
         });
         continue;
@@ -376,8 +395,8 @@ function staleOrderbookTokenIds(snapshot: RewardsDashboardState, maxAgeSeconds: 
   return stale;
 }
 
-function hasComparableOpenOrder(plan: RewardQuotePlan, openOrders: OpenOrderSummary[]): boolean {
-  return openOrders.some((order) => (
+function findComparableOpenOrder(plan: RewardQuotePlan, openOrders: OpenOrderSummary[]): OpenOrderSummary | undefined {
+  return openOrders.find((order) => (
     order.tokenId === plan.tokenId &&
     order.side === plan.side &&
     ACTIVE_ORDER_STATUSES.has(order.status.toLowerCase()) &&
@@ -501,6 +520,14 @@ function roundMoney(value: number): number {
 
 function roundShares(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function formatUsd(value: number): string {
+  return `$${roundMoney(value).toFixed(2)}`;
+}
+
+function formatShares(value: number): string {
+  return roundShares(value).toFixed(2);
 }
 
 function roundPrice(value: number): number {
