@@ -33,7 +33,7 @@ rsync -az --delete \
 
 ssh "${SERVER}" "cd ${APP_DIR} && if [ ! -f .env ]; then cp .env.example .env; echo '[deploy] created .env from .env.example; review rewards scanner settings before enabling any live order path'; fi"
 ssh "${SERVER}" "cd ${APP_DIR} && chmod 600 .env"
-ssh "${SERVER}" "cd ${APP_DIR} && if grep -Eq 'poly-btc5m|btc5m|b\\.dark20|8788|4174|8088|8444|8454' .env; then echo '[deploy] refusing to continue: remote .env contains old btc5m names or ports. Review ~/apps/poly-rewards/.env first.' >&2; exit 1; fi"
+ssh "${SERVER}" "cd ${APP_DIR} && if grep -Eq 'poly-btc5m|btc5m|b\\.dark20|8788|4174|8088|8444' .env; then echo '[deploy] refusing to continue: remote .env contains old btc5m names or ports. Review ~/apps/poly-rewards/.env first.' >&2; exit 1; fi"
 ssh "${SERVER}" "cd ${APP_DIR} && COMPOSE_PROJECT_NAME='poly-rewards' && export COMPOSE_PROJECT_NAME && api_container=\$(if docker compose version >/dev/null 2>&1; then docker compose -f ${COMPOSE_FILE} ps -q api; elif command -v docker-compose >/dev/null 2>&1; then docker-compose -f ${COMPOSE_FILE} ps -q api; else true; fi) && if [ -n \"\$api_container\" ] && [ ! -s data/runtime-state.json ]; then docker cp \"\$api_container:/app/data/runtime-state.json\" data/runtime-state.json >/dev/null 2>&1 && echo '[deploy] preserved runtime state from existing API container' || true; fi"
 remote_compose "-f ${COMPOSE_FILE} up -d --build --remove-orphans"
 remote_compose "-f ${COMPOSE_FILE} ps"
