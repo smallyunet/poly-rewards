@@ -3,11 +3,13 @@ import { RewardsExecutionService } from './rewardsExecution';
 import { runRewardsTick } from './rewards';
 import { createServer } from './server';
 import { RewardsStore } from './rewardsStore';
+import { OrderbookStream } from './orderbookStream';
 
 async function main() {
   const config = loadRewardsAppConfig();
   const store = new RewardsStore(config.tickIntervalMs, config.executionMode, { maxRecords: config.runtimeMaxRecords });
   const execution = new RewardsExecutionService(config);
+  const orderbookStream = new OrderbookStream(config);
 
   let tickRunning = false;
   const tick = async (source: 'initial' | 'scheduled' | 'manual') => {
@@ -17,10 +19,14 @@ async function main() {
     }
     tickRunning = true;
     try {
-      const snapshot = await runRewardsTick(config);
+      const snapshot = await runRewardsTick(config, orderbookStream);
       store.recordRewardsSnapshot(snapshot);
       const executionState = await execution.reconcile(snapshot);
       store.recordExecutionState(executionState);
+      orderbookStream.syncTokenIds([
+        ...snapshot.quotePlans.filter((plan) => plan.eligible).map((plan) => plan.tokenId),
+        ...executionState.activeOrders.map((order) => order.tokenId),
+      ]);
       store.markRunningIfDegraded();
       store.recordRuntimeLog({
         level: snapshot.diagnostics.some((item) => /failed|stale|blocked|error/i.test(item)) || executionState.recentEvents.some((event) => event.level === 'error') ? 'warn' : 'info',

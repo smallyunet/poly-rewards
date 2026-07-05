@@ -44,7 +44,6 @@ type Tone = 'good' | 'warn' | 'bad' | 'neutral';
 
 export function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('strategy');
 
   const load = async () => {
@@ -61,18 +60,6 @@ export function App() {
     const timer = window.setInterval(() => void load(), DASHBOARD_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, []);
-
-  const manualTick = async () => {
-    setRefreshing(true);
-    try {
-      const data = await api<RewardsAppState>('/api/tick', { method: 'POST' });
-      setState({ status: 'ready', data });
-    } catch (error) {
-      setState({ status: 'error', error: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setRefreshing(false);
-    }
-  };
 
   if (state.status === 'loading') {
     return <Shell><EmptyState title="Loading rewards workspace" detail="Waiting for the worker to publish the first scanner snapshot." /></Shell>;
@@ -110,10 +97,13 @@ export function App() {
             {execution?.mode === 'live' ? <Zap size={16} /> : <PauseCircle size={16} />}
             <span>{execution?.mode === 'live' ? 'Live execution' : 'Monitor only'}</span>
           </div>
-          <button className="primaryButton" onClick={manualTick} disabled={refreshing} title="Run scanner now">
-            <RefreshCw size={18} className={refreshing ? 'spin' : ''} />
-            <span>Run scan</span>
-          </button>
+          <div className="modePill">
+            <RefreshCw size={16} />
+            <span>Auto every {Math.round(state.data.runtime.tickIntervalMs / 1000)}s</span>
+          </div>
+          <div className="scheduleText">
+            Next scan {state.data.runtime.nextTickAt ? formatTime(state.data.runtime.nextTickAt) : '-'}
+          </div>
         </div>
       </header>
 
@@ -158,7 +148,7 @@ export function App() {
 
       {activeTab === 'markets' ? (
         <section className="workspaceGrid tabPanel">
-          <Panel title="Ranked Markets" subtitle="Reward candidates ordered by net score after risk penalties.">
+          <Panel title="Opportunity Queue" subtitle="Actionable markets first, then closest capital-fit misses by required funding and risk.">
             <MarketList candidates={rewards.candidates.slice(0, 10)} config={rewards.config} />
           </Panel>
           <Panel title="Quote Plans" subtitle="Current BUY YES / BUY NO plan set after reward min-size enforcement.">
@@ -365,7 +355,7 @@ function MarketList({ candidates, config }: { candidates: RewardMarketCandidate[
 function QuotePlanList({ plans, candidates }: { plans: RewardQuotePlan[]; candidates: RewardMarketCandidate[] }) {
   const marketById = new Map(candidates.map((market) => [market.id, market]));
   const visible = plans.slice(0, 18);
-  if (!visible.length) return <EmptyState title="No quote plans" detail="No ranked market currently passes the quote planner." />;
+  if (!visible.length) return <EmptyState title="No quote plans" detail="No opportunity currently passes min-size, spread, and risk controls." />;
   return (
     <div className="quoteList">
       {visible.map((plan) => {
@@ -470,7 +460,8 @@ function RiskControls({ state }: { state: RewardsAppState }) {
     ['Quote offset', config.quoteOffset.toFixed(3), 'neutral'],
     ['Min daily reward', formatUsd(config.minDailyReward), 'neutral'],
     ['Min time to close', `${Math.round(config.minSecondsToClose / 3600)}h`, 'neutral'],
-    ['Max order age', `${config.maxOrderAgeSeconds}s`, config.maxOrderAgeSeconds < 120 ? 'warn' : 'neutral'],
+    ['Drift review age', `${config.maxOrderAgeSeconds}s`, 'neutral'],
+    ['Hard refresh age', `${config.maxOrderHardAgeSeconds}s`, config.maxOrderHardAgeSeconds < 600 ? 'warn' : 'neutral'],
     ['Orderbook max age', `${config.maxOrderbookAgeSeconds}s`, 'neutral'],
     ['Inventory cap / outcome', formatShares(config.maxInventorySharesPerOutcome), 'neutral'],
     ['Collateral reserve', formatUsd(config.minCollateralBalance), config.minCollateralBalance <= 0 ? 'warn' : 'neutral'],

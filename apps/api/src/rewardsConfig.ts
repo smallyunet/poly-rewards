@@ -8,6 +8,7 @@ export type RewardsAppConfig = {
   dashboardInternalApiKey?: string;
   executionMode: RewardsExecutionMode;
   clobApiUrl: string;
+  clobWsUrl: string;
   gammaApiUrl: string;
   dataApiUrl: string;
   chainId: number;
@@ -25,6 +26,7 @@ export function loadRewardsAppConfig(): RewardsAppConfig {
     dashboardInternalApiKey: process.env.DASHBOARD_INTERNAL_API_KEY,
     executionMode: executionModeEnv(process.env.EXECUTION_MODE),
     clobApiUrl: process.env.POLYMARKET_CLOB_API_URL || 'https://clob.polymarket.com',
+    clobWsUrl: process.env.POLYMARKET_CLOB_WS_URL || 'wss://ws-subscriptions-clob.polymarket.com/ws/market',
     gammaApiUrl: process.env.POLYMARKET_GAMMA_API_URL || 'https://gamma-api.polymarket.com',
     dataApiUrl: process.env.POLYMARKET_DATA_API_URL || 'https://data-api.polymarket.com',
     chainId: Number(process.env.POLYMARKET_CHAIN_ID || 137),
@@ -50,7 +52,8 @@ function loadRewardsRuntimeConfig(): RewardsRuntimeConfig {
     maxMarketNotional: numberEnv('REWARDS_MARKET_MAX_NOTIONAL', 10),
     maxOpenMarkets: parsePositiveInteger(process.env.REWARDS_MAX_OPEN_MARKETS, 10),
     maxMidpointDrift: numberEnv('REWARDS_MAX_MIDPOINT_DRIFT', 0.015),
-    maxOrderAgeSeconds: parsePositiveInteger(process.env.REWARDS_MAX_ORDER_AGE_SECONDS, 60),
+    maxOrderAgeSeconds: parsePositiveInteger(process.env.REWARDS_MAX_ORDER_AGE_SECONDS, 600),
+    maxOrderHardAgeSeconds: parsePositiveInteger(process.env.REWARDS_MAX_ORDER_HARD_AGE_SECONDS, 1_800),
     maxOrderbookAgeSeconds: numberEnv('REWARDS_MAX_ORDERBOOK_AGE_SECONDS', 5),
     maxInventorySharesPerOutcome: numberEnv('REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME', 20),
     minCollateralBalance: numberEnv('REWARDS_MIN_COLLATERAL_BALANCE', 5),

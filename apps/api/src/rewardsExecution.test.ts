@@ -146,6 +146,34 @@ test('execution reconciliation records matched-size fill deltas', async () => {
   assert.equal(state.recentFills[0].source, 'open_order_match');
 });
 
+test('live execution does not cancel solely on soft order age before hard refresh age', async () => {
+  const runtimeStatePath = tempStatePath();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxOrderAgeSeconds: 1,
+      maxOrderHardAgeSeconds: 60 * 60,
+    },
+  });
+  const first = new RewardsExecutionService(config, fakeClient());
+  await first.reconcile(testSnapshot());
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+
+  const second = new RewardsExecutionService(config, fakeClient({
+    openOrders: [
+      { id: 'order-YES', tokenId: 'yes-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} },
+      { id: 'order-NO', tokenId: 'no-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} },
+    ],
+  }));
+  const state = await second.reconcile(testSnapshot());
+
+  assert.equal(state.totals.cancelledThisTick, 0);
+});
+
 function testConfig(overrides: Partial<RewardsAppConfig> & { rewards?: Partial<RewardsAppConfig['rewards']> } = {}): RewardsAppConfig {
   const originalEnv = { ...process.env };
   process.env.REWARDS_BLOCKED_CATEGORIES = '';
@@ -161,6 +189,8 @@ function testConfig(overrides: Partial<RewardsAppConfig> & { rewards?: Partial<R
         maxInventorySharesPerOutcome: 50,
         minCollateralBalance: 5,
         maxActiveOrdersPerMarket: 2,
+        maxOrderAgeSeconds: 600,
+        maxOrderHardAgeSeconds: 1800,
         ...overrides.rewards,
       },
     };

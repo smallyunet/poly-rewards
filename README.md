@@ -64,6 +64,7 @@ Core runtime:
 ```dotenv
 EXECUTION_MODE=monitor
 POLYMARKET_CLOB_API_URL=https://clob.polymarket.com
+POLYMARKET_CLOB_WS_URL=wss://ws-subscriptions-clob.polymarket.com/ws/market
 BOT_TICK_MS=10000
 RUNTIME_STATE_PATH=data/runtime-state.json
 ```
@@ -82,7 +83,8 @@ REWARDS_GLOBAL_MAX_NOTIONAL=100
 REWARDS_MARKET_MAX_NOTIONAL=10
 REWARDS_MAX_OPEN_MARKETS=10
 REWARDS_MAX_MIDPOINT_DRIFT=0.015
-REWARDS_MAX_ORDER_AGE_SECONDS=60
+REWARDS_MAX_ORDER_AGE_SECONDS=600
+REWARDS_MAX_ORDER_HARD_AGE_SECONDS=1800
 REWARDS_MAX_ORDERBOOK_AGE_SECONDS=5
 REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME=20
 REWARDS_MIN_COLLATERAL_BALANCE=5
@@ -90,6 +92,15 @@ REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET=2
 REWARDS_BLOCKED_CATEGORIES=crypto,geopolitics
 REWARDS_BLOCKED_KEYWORDS=5m,15m,live,in-play,missile,strike,war,attack,breaking
 ```
+
+Order management is drift-first. Managed orders are not cancelled merely
+because they are 60 seconds old. They are cancelled when the current quote plan
+disappears, midpoint drift exceeds `REWARDS_MAX_MIDPOINT_DRIFT`, orderbook data
+is stale, or the long hard-refresh age is reached.
+
+For markets with active quote plans or active managed orders, the worker
+subscribes to Polymarket's public market WebSocket and uses live orderbook
+updates before falling back to REST snapshots.
 
 ## API
 

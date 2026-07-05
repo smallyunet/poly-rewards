@@ -100,7 +100,7 @@ export class RewardsExecutionService {
       const priceDrift = currentPlan ? Math.abs(currentPlan.price - order.price) : Number.POSITIVE_INFINITY;
       const shouldCancel =
         !currentPlan ||
-        ageSeconds > this.appConfig.rewards.maxOrderAgeSeconds ||
+        ageSeconds > this.appConfig.rewards.maxOrderHardAgeSeconds ||
         priceDrift > this.appConfig.rewards.maxMidpointDrift ||
         staleTokenIds.has(order.tokenId);
 

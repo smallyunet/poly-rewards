@@ -75,9 +75,13 @@ For guarded live operation:
   active external orders.
 - Try lower-notional quote plans before higher-notional plans so the runtime can
   post what the current balance can actually cover.
-- Cancel only managed orders from the current process when age, price drift, or
-  orderbook freshness triggers fire, including orders restored from persisted
+- Cancel only managed orders from the current process when the quote plan
+  disappears, price drift or orderbook freshness triggers fire, or the long
+  hard-refresh age is reached, including orders restored from persisted
   execution state.
+- Subscribe to the public CLOB market WebSocket for quote-plan and active-order
+  token IDs so orderbook changes are observed in near real time before falling
+  back to REST snapshots.
 - Enforce collateral reserve, per-market active-order caps, and per-outcome
   inventory caps before posting.
 - Persist managed orders, execution events, and inferred fill records across

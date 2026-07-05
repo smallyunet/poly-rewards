@@ -135,6 +135,12 @@ h1 {
   justify-items: end;
 }
 
+.scheduleText {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .modePill {
   min-height: 38px;
   padding: 0 12px;

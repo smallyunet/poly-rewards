@@ -2,8 +2,11 @@ import type { RewardMarketCandidate, RewardOrderbookSummary, RewardQuotePlan, Re
 import type { RewardsAppConfig } from './rewardsConfig';
 
 type RawMarket = Record<string, unknown>;
+export type RewardOrderbookProvider = {
+  getOrderbook(tokenId: string, label: RewardOrderbookSummary['label']): RewardOrderbookSummary | undefined;
+};
 
-export async function runRewardsTick(appConfig: RewardsAppConfig): Promise<RewardsDashboardState> {
+export async function runRewardsTick(appConfig: RewardsAppConfig, orderbooks?: RewardOrderbookProvider): Promise<RewardsDashboardState> {
   const updatedAt = new Date().toISOString();
   if (!appConfig.rewards.enabled) {
     return emptyRewardsState(appConfig, 'disabled', updatedAt, ['Rewards scanner is disabled by REWARDS_ENABLED=false.']);
@@ -12,8 +15,8 @@ export async function runRewardsTick(appConfig: RewardsAppConfig): Promise<Rewar
   const diagnostics: string[] = [];
   const rawMarkets = await fetchRewardMarkets(appConfig, diagnostics);
   const limitedMarkets = rawMarkets.slice(0, appConfig.rewards.scannerLimit);
-  const candidates = await Promise.all(limitedMarkets.map((market) => buildCandidate(appConfig, market, diagnostics)));
-  const ranked = candidates.sort((a, b) => b.netScore - a.netScore);
+  const candidates = await Promise.all(limitedMarkets.map((market) => buildCandidate(appConfig, market, diagnostics, orderbooks)));
+  const ranked = candidates.sort(compareCandidateOpportunity);
   const quotePlans = planQuotes(appConfig, ranked, updatedAt);
   const plannedMarketIds = new Set(quotePlans.filter((plan) => plan.eligible).map((plan) => plan.marketId));
 
@@ -58,7 +61,7 @@ async function fetchRewardMarkets(appConfig: RewardsAppConfig, diagnostics: stri
   return [];
 }
 
-async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagnostics: string[]): Promise<RewardMarketCandidate> {
+async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagnostics: string[], orderbooks?: RewardOrderbookProvider): Promise<RewardMarketCandidate> {
   const rawConditionId = readString(raw, ['condition_id', 'conditionId']);
   const enriched = rawConditionId ? { ...(await fetchMarketInfo(appConfig, rawConditionId, diagnostics)), ...raw } : raw;
   const id = readString(enriched, ['market', 'market_id', 'marketId', 'id', 'condition_id', 'conditionId']) || `market-${stableHash(JSON.stringify(enriched).slice(0, 500))}`;
@@ -78,12 +81,13 @@ async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagn
   const liquidity = readNumber(enriched, ['liquidity', 'liquidityNum']);
   const tokens = readTokens(enriched);
   const [yesOrderbook, noOrderbook] = await Promise.all([
-    tokens.find((token) => token.label === 'YES')?.tokenId ? fetchOrderbook(appConfig, tokens.find((token) => token.label === 'YES')!.tokenId, 'YES', diagnostics) : undefined,
-    tokens.find((token) => token.label === 'NO')?.tokenId ? fetchOrderbook(appConfig, tokens.find((token) => token.label === 'NO')!.tokenId, 'NO', diagnostics) : undefined,
+    tokens.find((token) => token.label === 'YES')?.tokenId ? readOrderbook(appConfig, tokens.find((token) => token.label === 'YES')!.tokenId, 'YES', diagnostics, orderbooks) : undefined,
+    tokens.find((token) => token.label === 'NO')?.tokenId ? readOrderbook(appConfig, tokens.find((token) => token.label === 'NO')!.tokenId, 'NO', diagnostics, orderbooks) : undefined,
   ]);
   const adjustedMidpoint = adjustedMidpointFromBooks(yesOrderbook, noOrderbook);
   const marketSpread = yesOrderbook?.spread ?? null;
-  const estimatedRequiredCapital = appConfig.rewards.quoteSize * Math.max(adjustedMidpoint ?? 0.5, 0.01) * 2;
+  const requiredShares = Math.max(minSize, appConfig.rewards.quoteSize);
+  const estimatedRequiredCapital = estimatedTwoSidedCapital(appConfig, adjustedMidpoint, marketSpread, requiredShares);
   const riskTags = riskTagsFor(appConfig, { question, category, endDate, dailyReward, minSize, maxSpread, competitiveness, yesOrderbook, noOrderbook });
   const rejectReasons = rejectReasonsFor(appConfig, { active, closed, acceptingOrders, dailyReward, minSize, maxSpread, endDate, tokens, yesOrderbook, noOrderbook, question, category });
   const rewardScore = dailyReward > 0 ? dailyReward / Math.max(estimatedRequiredCapital, 1) / Math.max(competitiveness ?? 1, 1) : 0;
@@ -119,6 +123,10 @@ async function buildCandidate(appConfig: RewardsAppConfig, raw: RawMarket, diagn
     rejectReasons,
     raw: enriched,
   };
+}
+
+async function readOrderbook(appConfig: RewardsAppConfig, tokenId: string, label: 'YES' | 'NO', diagnostics: string[], orderbooks?: RewardOrderbookProvider): Promise<RewardOrderbookSummary | undefined> {
+  return orderbooks?.getOrderbook(tokenId, label) || fetchOrderbook(appConfig, tokenId, label, diagnostics);
 }
 
 async function fetchMarketInfo(appConfig: RewardsAppConfig, conditionId: string, diagnostics: string[]): Promise<RawMarket> {
@@ -211,7 +219,7 @@ function quotePlan(appConfig: RewardsAppConfig, market: RewardMarketCandidate, t
     reason: quoteReason(market, size, eligible),
     cancelRepostTriggers: [
       `midpoint drift > ${appConfig.rewards.maxMidpointDrift}`,
-      `order age > ${appConfig.rewards.maxOrderAgeSeconds}s`,
+      `hard order age > ${appConfig.rewards.maxOrderHardAgeSeconds}s`,
       `orderbook age > ${appConfig.rewards.maxOrderbookAgeSeconds}s`,
       'inventory exceeds per-outcome limit',
       'heartbeat or market data is unhealthy',
@@ -307,6 +315,40 @@ function riskScoreFor(tags: RewardRiskTag[], rejectReasons: string[]): number {
     'thin-book': 1,
   };
   return sum(tags.map((tag) => weights[tag] ?? 0)) + rejectReasons.length * 2;
+}
+
+function compareCandidateOpportunity(a: RewardMarketCandidate, b: RewardMarketCandidate): number {
+  const aActionable = isActionableCandidate(a);
+  const bActionable = isActionableCandidate(b);
+  if (aActionable !== bActionable) return aActionable ? -1 : 1;
+
+  if (!aActionable && !bActionable) {
+    const reasonDelta = a.rejectReasons.length - b.rejectReasons.length;
+    if (reasonDelta !== 0) return reasonDelta;
+    const capitalDelta = a.estimatedRequiredCapital - b.estimatedRequiredCapital;
+    if (capitalDelta !== 0) return capitalDelta;
+  }
+
+  const scoreDelta = b.netScore - a.netScore;
+  if (scoreDelta !== 0) return scoreDelta;
+  const capitalDelta = a.estimatedRequiredCapital - b.estimatedRequiredCapital;
+  if (capitalDelta !== 0) return capitalDelta;
+  return b.dailyReward - a.dailyReward;
+}
+
+function isActionableCandidate(candidate: RewardMarketCandidate): boolean {
+  return candidate.rejectReasons.length === 0 && candidate.adjustedMidpoint != null;
+}
+
+function estimatedTwoSidedCapital(appConfig: RewardsAppConfig, midpoint: number | null, marketSpread: number | null, shares: number): number {
+  if (midpoint == null) return shares;
+  const offset = Math.max(appConfig.rewards.quoteOffset, (marketSpread ?? 0) / 2);
+  const yesPrice = roundPrice(midpoint - offset);
+  const noPrice = roundPrice(1 - midpoint - offset);
+  if (yesPrice <= 0.01 || yesPrice >= 0.99 || noPrice <= 0.01 || noPrice >= 0.99) {
+    return shares * Math.max(midpoint, 0.01) * 2;
+  }
+  return shares * (yesPrice + noPrice);
 }
 
 function adjustedMidpointFromBooks(yes?: RewardOrderbookSummary, no?: RewardOrderbookSummary): number | null {

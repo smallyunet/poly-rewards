@@ -13,6 +13,7 @@ export const rewardsRuntimeConfigSchema = z.object({
   maxOpenMarkets: z.number().int().positive(),
   maxMidpointDrift: z.number().nonnegative(),
   maxOrderAgeSeconds: z.number().int().positive(),
+  maxOrderHardAgeSeconds: z.number().int().positive(),
   maxOrderbookAgeSeconds: z.number().positive(),
   maxInventorySharesPerOutcome: z.number().nonnegative(),
   minCollateralBalance: z.number().nonnegative(),

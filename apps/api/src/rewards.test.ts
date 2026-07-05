@@ -115,6 +115,72 @@ test('quote planner rejects markets when reward min size exceeds configured quot
   }
 });
 
+test('scanner ranks actionable capital-fit markets before high-reward blocked markets', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  process.env.REWARDS_BLOCKED_CATEGORIES = '';
+  process.env.REWARDS_BLOCKED_KEYWORDS = '';
+  process.env.REWARDS_MIN_SECONDS_TO_CLOSE = '3600';
+  process.env.REWARDS_QUOTE_SIZE = '5';
+  process.env.REWARDS_MARKET_MAX_NOTIONAL = '20';
+  process.env.REWARDS_GLOBAL_MAX_NOTIONAL = '50';
+
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes('/rewards/markets/current')) {
+      return jsonResponse([
+        marketFixture('expensive-reward', 'Expensive crowded weather outcome', 100, 100),
+        marketFixture('small-fit', 'Smaller fundable weather outcome', 8, 5),
+      ]);
+    }
+    if (url.includes('/book?token_id=yes-expensive-reward')) {
+      return jsonResponse({ bids: [{ price: '0.49', size: '100' }], asks: [{ price: '0.51', size: '100' }] });
+    }
+    if (url.includes('/book?token_id=no-expensive-reward')) {
+      return jsonResponse({ bids: [{ price: '0.48', size: '100' }], asks: [{ price: '0.52', size: '100' }] });
+    }
+    if (url.includes('/book?token_id=yes-small-fit')) {
+      return jsonResponse({ bids: [{ price: '0.49', size: '100' }], asks: [{ price: '0.51', size: '100' }] });
+    }
+    if (url.includes('/book?token_id=no-small-fit')) {
+      return jsonResponse({ bids: [{ price: '0.48', size: '100' }], asks: [{ price: '0.52', size: '100' }] });
+    }
+    return jsonResponse([]);
+  }) as typeof fetch;
+
+  try {
+    const state = await runRewardsTick(loadRewardsAppConfig());
+    assert.equal(state.candidates[0].id, 'small-fit');
+    assert.equal(state.candidates[0].rejectReasons.length, 0);
+    assert.equal(state.candidates[1].id, 'expensive-reward');
+    assert.equal(state.quotePlans.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env = originalEnv;
+  }
+});
+
+function marketFixture(id: string, question: string, dailyReward: number, minSize: number) {
+  return {
+    id,
+    condition_id: id,
+    question,
+    category: 'weather',
+    active: true,
+    closed: false,
+    accepting_orders: true,
+    daily_reward: dailyReward,
+    min_incentive_size: minSize,
+    max_incentive_spread: 5,
+    market_competitiveness: 1,
+    end_date_iso: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+    tokens: [
+      { outcome: 'Yes', token_id: `yes-${id}` },
+      { outcome: 'No', token_id: `no-${id}` },
+    ],
+  };
+}
+
 function jsonResponse(value: unknown): Response {
   return new Response(JSON.stringify(value), {
     status: 200,
