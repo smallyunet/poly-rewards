@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, CheckCircle2, Clock, RefreshCw, Shield, TrendingUp, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, ClipboardList, Clock, Layers, ListChecks, RefreshCw, Shield, TrendingUp, Zap } from 'lucide-react';
 
 import type { RewardExecutionEvent, RewardFillRecord, RewardInventorySummary, RewardMarketCandidate, RewardQuotePlan, RewardsAppState, RuntimeLogRecord } from '../../../packages/shared/src';
 import { api, DASHBOARD_REFRESH_MS } from './lib/api';
@@ -9,9 +9,12 @@ type LoadState =
   | { status: 'ready'; data: RewardsAppState }
   | { status: 'error'; error: string };
 
+type DashboardTab = 'markets' | 'execution' | 'inventory' | 'logs';
+
 export function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<DashboardTab>('markets');
 
   const load = async () => {
     try {
@@ -83,41 +86,51 @@ export function App() {
         <Metric icon={<Clock size={18} />} label="Updated" value={formatTime(rewards.updatedAt)} detail={`every ${Math.round(state.data.runtime.tickIntervalMs / 1000)}s`} />
       </section>
 
-      <section className="contentGrid">
-        <Panel title="Top Candidates" subtitle="Ranked by reward score minus risk penalties">
-          <CandidateTable candidates={topCandidates} />
-        </Panel>
-        <Panel title="Dry-run Quote Plans" subtitle="BUY YES / BUY NO plans that pass risk caps">
-          <QuoteTable plans={rewards.quotePlans} />
-        </Panel>
-      </section>
+      <Tabs activeTab={activeTab} onChange={setActiveTab} />
 
-      <section className="contentGrid lower">
-        <Panel title="Risk Controls" subtitle="Current scanner and quote planner guardrails">
-          <RiskControls state={state.data} />
-        </Panel>
-        <Panel title="Execution" subtitle="Live order reconciliation and guarded posting state">
-          <ExecutionPanel state={state.data} />
-        </Panel>
-      </section>
+      {activeTab === 'markets' ? (
+        <section className="contentGrid tabPanel">
+          <Panel title="Top Candidates" subtitle="Ranked by reward score minus risk penalties">
+            <CandidateTable candidates={topCandidates} />
+          </Panel>
+          <Panel title="Quote Plans" subtitle="BUY YES / BUY NO plans that pass risk caps">
+            <QuoteTable plans={rewards.quotePlans} />
+          </Panel>
+        </section>
+      ) : null}
 
-      <section className="contentGrid lower">
-        <Panel title="Runtime Logs" subtitle="Worker and API events">
-          <RuntimeLogs logs={state.data.runtimeLogs.slice(0, 8)} diagnostics={rewards.diagnostics} />
-        </Panel>
-        <Panel title="Execution Events" subtitle="Recent post, cancel, skip, and reconciliation decisions">
-          <ExecutionEvents events={execution?.recentEvents || []} />
-        </Panel>
-      </section>
+      {activeTab === 'execution' ? (
+        <section className="contentGrid lower tabPanel">
+          <Panel title="Risk Controls" subtitle="Current scanner and quote planner guardrails">
+            <RiskControls state={state.data} />
+          </Panel>
+          <Panel title="Execution" subtitle="Live order reconciliation and guarded posting state">
+            <ExecutionPanel state={state.data} />
+          </Panel>
+        </section>
+      ) : null}
 
-      <section className="contentGrid lower">
-        <Panel title="Inventory" subtitle="Filled exposure and open managed buy size by token">
-          <InventoryTable rows={execution?.inventory || []} />
-        </Panel>
-        <Panel title="Fills" subtitle="Recent matched or terminal-reconciled managed order fills">
-          <FillTable fills={execution?.recentFills || []} />
-        </Panel>
-      </section>
+      {activeTab === 'inventory' ? (
+        <section className="contentGrid lower tabPanel">
+          <Panel title="Inventory" subtitle="Filled exposure and open managed buy size by token">
+            <InventoryTable rows={execution?.inventory || []} />
+          </Panel>
+          <Panel title="Fills" subtitle="Recent matched or terminal-reconciled managed order fills">
+            <FillTable fills={execution?.recentFills || []} />
+          </Panel>
+        </section>
+      ) : null}
+
+      {activeTab === 'logs' ? (
+        <section className="contentGrid lower tabPanel">
+          <Panel title="Runtime Logs" subtitle="Worker and API events">
+            <RuntimeLogs logs={state.data.runtimeLogs.slice(0, 8)} diagnostics={rewards.diagnostics} />
+          </Panel>
+          <Panel title="Execution Events" subtitle="Recent post, cancel, skip, and reconciliation decisions">
+            <ExecutionEvents events={execution?.recentEvents || []} />
+          </Panel>
+        </section>
+      ) : null}
     </Shell>
   );
 }
@@ -150,6 +163,31 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
       </div>
       {children}
     </section>
+  );
+}
+
+function Tabs({ activeTab, onChange }: { activeTab: DashboardTab; onChange: (tab: DashboardTab) => void }) {
+  const tabs: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = [
+    { id: 'markets', label: 'Markets', icon: <Layers size={16} /> },
+    { id: 'execution', label: 'Execution', icon: <ListChecks size={16} /> },
+    { id: 'inventory', label: 'Inventory', icon: <ClipboardList size={16} /> },
+    { id: 'logs', label: 'Logs', icon: <AlertTriangle size={16} /> },
+  ];
+  return (
+    <nav className="tabs" aria-label="Dashboard sections">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={`tabButton ${activeTab === tab.id ? 'active' : ''}`}
+          onClick={() => onChange(tab.id)}
+          aria-current={activeTab === tab.id ? 'page' : undefined}
+        >
+          {tab.icon}
+          <span>{tab.label}</span>
+        </button>
+      ))}
+    </nav>
   );
 }
 

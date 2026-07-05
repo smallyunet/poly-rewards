@@ -162,11 +162,71 @@ h2 {
   color: var(--muted);
 }
 
+.tabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 16px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #eef1eb;
+  overflow-x: auto;
+}
+
+.tabButton {
+  min-width: 132px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tabButton:hover {
+  background: #f8faf5;
+}
+
+.tabButton:focus-visible {
+  outline: 3px solid #9bc8ad;
+  outline-offset: 2px;
+}
+
+.tabButton.active {
+  background: var(--surface);
+  border-color: #cfd8cd;
+  color: #1f3d2f;
+  box-shadow: 0 1px 2px rgba(23, 32, 27, 0.08);
+}
+
 .contentGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(420px, 0.65fr);
   gap: 16px;
   align-items: start;
+}
+
+.tabPanel {
+  animation: panelIn 160ms ease-out;
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .contentGrid.lower {
@@ -379,7 +439,23 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .tabs {
+    margin-left: -2px;
+    margin-right: -2px;
+  }
+
+  .tabButton {
+    min-width: 118px;
+  }
+
   .iconButton {
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabPanel,
+  .spin {
+    animation: none;
   }
 }
