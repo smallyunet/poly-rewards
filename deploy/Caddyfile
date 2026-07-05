@@ -1,4 +1,11 @@
-{$SITE_DOMAIN} {
+:80 {
+	encode zstd gzip
+
+	reverse_proxy api:8798
+}
+
+https://{$HTTPS_SITE_DOMAIN} {
+	tls internal
 	encode zstd gzip
 
 	reverse_proxy api:8798

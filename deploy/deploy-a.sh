@@ -38,4 +38,4 @@ ssh "${SERVER}" "cd ${APP_DIR} && COMPOSE_PROJECT_NAME='poly-rewards' && export 
 remote_compose "-f ${COMPOSE_FILE} up -d --build --remove-orphans"
 remote_compose "-f ${COMPOSE_FILE} ps"
 
-echo "[deploy] done. In the default non-conflicting setup, point the public reverse proxy to http://127.0.0.1:${HTTP_PORT:-8098}/."
+echo "[deploy] done. Point Cloudflare HTTP origin traffic to ${HTTP_PORT:-8098}, or HTTPS origin traffic to ${HTTPS_PORT:-8454} with SSL/TLS mode Full."
