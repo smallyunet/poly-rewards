@@ -284,6 +284,61 @@ test('live execution posts SELL exit for stale unhedged inventory', async () => 
   assert.match(state.recentEvents.find((event) => event.message.includes('SELL exit'))?.message || '', /SELL exit/);
 });
 
+test('live execution floors SELL exit size to avoid exceeding wallet share balance', async () => {
+  const runtimeStatePath = tempStatePath();
+  const old = new Date(Date.now() - 60_000).toISOString();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxUnhedgedInventoryAgeSeconds: 1,
+      maxInventoryLossPerShare: 1,
+      minInventoryExitShares: 1,
+    },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'filled-yes',
+      planId: 'filled-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 5,
+      remainingSize: 0,
+      notional: 2.43,
+      status: 'filled',
+      createdAt: old,
+      updatedAt: old,
+    }],
+    fills: [{
+      id: 'fill-yes',
+      orderId: 'filled-yes',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      notional: 2.43,
+      source: 'terminal_reconcile',
+      createdAt: old,
+    }],
+  });
+  const client = fakeClient({ inventory: 4.999 });
+  const execution = new RewardsExecutionService(config, client);
+
+  await execution.reconcile(testSnapshot());
+
+  assert.equal(client.posted[0].shares, 4.99);
+});
+
 
 test('execution state persists and restores managed orders across service instances', async () => {
   const runtimeStatePath = tempStatePath();
@@ -339,6 +394,54 @@ test('execution reconciliation records matched-size fill deltas', async () => {
   assert.equal(state.totals.filledCostBasis, 0.97);
   assert.equal(state.inventory.find((row) => row.tokenId === 'yes-token')?.filledSize, 2);
   assert.equal(state.recentFills[0].source, 'open_order_match');
+});
+
+test('execution inventory replays fills chronologically and preserves remaining cost basis after sells', async () => {
+  const runtimeStatePath = tempStatePath();
+  const config = testConfig({
+    executionMode: 'monitor',
+    runtimeStatePath,
+  });
+  writeExecutionState(runtimeStatePath, {
+    fills: [
+      {
+        id: 'sell-fill',
+        orderId: 'sell-order',
+        marketId: 'market-1',
+        conditionId: 'condition-1',
+        tokenId: 'yes-token',
+        label: 'YES',
+        side: 'SELL',
+        price: 0.11,
+        size: 10,
+        notional: 1.1,
+        source: 'terminal_reconcile',
+        createdAt: '2026-07-05T15:05:47.796Z',
+      },
+      {
+        id: 'buy-fill',
+        orderId: 'buy-order',
+        marketId: 'market-1',
+        conditionId: 'condition-1',
+        tokenId: 'yes-token',
+        label: 'YES',
+        side: 'BUY',
+        price: 0.257,
+        size: 20,
+        notional: 5.14,
+        source: 'terminal_reconcile',
+        createdAt: '2026-07-05T14:34:47.499Z',
+      },
+    ],
+  });
+  const execution = new RewardsExecutionService(config, fakeClient());
+
+  const state = await execution.reconcile(testSnapshot());
+  const inventory = state.inventory.find((row) => row.tokenId === 'yes-token');
+
+  assert.equal(inventory?.filledSize, 10);
+  assert.equal(inventory?.costBasis, 2.57);
+  assert.equal(inventory?.avgEntryPrice, 0.257);
 });
 
 test('live execution does not cancel solely on soft order age before hard refresh age', async () => {

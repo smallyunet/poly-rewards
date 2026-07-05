@@ -238,7 +238,7 @@ export class RewardsExecutionService {
 
       if (!missingPlans.length) {
         counters.skippedThisTick += 2;
-        this.event('info', 'skip', `Skipped market ${shortId(bundle.marketId)} because both YES and NO already have open BUY orders.`, {
+        this.event('info', 'skip', `Skipped market ${shortId(bundle.marketId)} because both YES and NO already have BUY coverage.`, {
           marketId: bundle.marketId,
           conditionId: bundle.conditionId,
           existingOrders: existingOrders.map((item) => existingOrderDetails(item)),
@@ -374,7 +374,7 @@ export class RewardsExecutionService {
       if (!timedOut && !stopLoss) continue;
 
       const availableShares = await this.client.getAvailableShares(row.tokenId);
-      const exitSize = roundShares(Math.min(unhedgedSize, availableShares));
+      const exitSize = floorShares(Math.min(unhedgedSize, availableShares));
       if (exitSize < this.appConfig.rewards.minInventoryExitShares) {
         this.event('warn', 'skip', `Skipped ${row.label} inventory exit because only ${formatShares(availableShares)} shares are available to sell.`, {
           marketId: row.marketId,
@@ -791,13 +791,14 @@ function planEventDetails(plan: RewardQuotePlan): { marketId: string; conditionI
   };
 }
 
-function existingOrderDetails(match: ExistingOrderMatch): { label: string; tokenId: string; orderId?: string; price?: number; size?: number | null } {
+function existingOrderDetails(match: ExistingOrderMatch): { label: string; tokenId: string; orderId?: string; price?: number; size?: number | null; source: ExistingOrderMatch['source'] } {
   return {
     label: match.plan.label,
     tokenId: match.plan.tokenId,
     orderId: match.orderId,
     price: match.price,
     size: match.size,
+    source: match.source,
   };
 }
 
@@ -808,7 +809,8 @@ function isPlanDetails(value: unknown): value is { marketId?: string; tokenId?: 
 function inventorySummary(orders: RewardManagedOrder[], fills: RewardFillRecord[]): RewardInventorySummary[] {
   const orderById = new Map(orders.map((order) => [order.orderId, order]));
   const rows = new Map<string, RewardInventorySummary>();
-  for (const fill of fills) {
+  const chronologicalFills = [...fills].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  for (const fill of chronologicalFills) {
     const order = orderById.get(fill.orderId);
     const key = fill.tokenId;
     const existing = rows.get(key) || {
@@ -821,9 +823,15 @@ function inventorySummary(orders: RewardManagedOrder[], fills: RewardFillRecord[
       avgEntryPrice: null,
       costBasis: 0,
     };
-    const sign = fill.side === 'SELL' ? -1 : 1;
-    existing.filledSize = roundShares(Math.max(existing.filledSize + sign * fill.size, 0));
-    existing.costBasis = roundMoney(Math.max(existing.costBasis + sign * fill.notional, 0));
+    if (fill.side === 'SELL') {
+      const soldSize = Math.min(existing.filledSize, fill.size);
+      const averageCost = existing.filledSize > 0 ? existing.costBasis / existing.filledSize : 0;
+      existing.filledSize = roundShares(Math.max(existing.filledSize - soldSize, 0));
+      existing.costBasis = roundMoney(Math.max(existing.costBasis - averageCost * soldSize, 0));
+    } else {
+      existing.filledSize = roundShares(existing.filledSize + fill.size);
+      existing.costBasis = roundMoney(existing.costBasis + fill.notional);
+    }
     existing.avgEntryPrice = existing.filledSize > 0 ? roundPrice(existing.costBasis / existing.filledSize) : null;
     if (order?.conditionId && !existing.conditionId) existing.conditionId = order.conditionId;
     rows.set(key, existing);
@@ -863,6 +871,10 @@ function sum(values: number[]): number {
 
 function roundShares(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function floorShares(value: number): number {
+  return Math.floor(value * 100) / 100;
 }
 
 function formatUsd(value: number): string {
