@@ -343,6 +343,81 @@ test('live execution does not cancel solely on soft order age before hard refres
   assert.equal(state.totals.cancelledThisTick, 0);
 });
 
+test('live execution does not immediately cancel fresh orders when orderbook is stale', async () => {
+  const runtimeStatePath = tempStatePath();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxOrderbookAgeSeconds: 1,
+    },
+  });
+  const first = new RewardsExecutionService(config, fakeClient());
+  const staleSnapshot = testSnapshot();
+  const staleUpdatedAt = new Date(Date.now() - 60_000).toISOString();
+  staleSnapshot.candidates[0].yesOrderbook = { ...staleSnapshot.candidates[0].yesOrderbook!, updatedAt: staleUpdatedAt };
+  staleSnapshot.candidates[0].noOrderbook = { ...staleSnapshot.candidates[0].noOrderbook!, updatedAt: staleUpdatedAt };
+  await first.reconcile(staleSnapshot);
+
+  const second = new RewardsExecutionService(config, fakeClient({
+    openOrders: [
+      { id: 'order-YES', tokenId: 'yes-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} },
+      { id: 'order-NO', tokenId: 'no-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} },
+    ],
+  }));
+  const state = await second.reconcile(staleSnapshot);
+
+  assert.equal(state.totals.cancelledThisTick, 0);
+  assert.equal(state.totals.activeOrders, 2);
+});
+
+test('live execution cancels old orders when orderbook remains stale', async () => {
+  const runtimeStatePath = tempStatePath();
+  const old = new Date(Date.now() - 60_000).toISOString();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxOrderbookAgeSeconds: 1,
+    },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'order-YES',
+      planId: 'old-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 0,
+      remainingSize: 5,
+      notional: 2.43,
+      status: 'open',
+      createdAt: old,
+      updatedAt: old,
+    }],
+  });
+  const staleSnapshot = testSnapshot();
+  staleSnapshot.candidates[0].yesOrderbook = { ...staleSnapshot.candidates[0].yesOrderbook!, updatedAt: old };
+  const execution = new RewardsExecutionService(config, fakeClient({
+    openOrders: [{ id: 'order-YES', tokenId: 'yes-token', side: 'BUY', price: 0.485, size: 5, sizeMatched: 0, status: 'open', raw: {} }],
+  }));
+
+  const state = await execution.reconcile(staleSnapshot);
+
+  assert.equal(state.totals.cancelledThisTick, 1);
+  const cancelEvent = state.recentEvents.find((event) => event.action === 'cancel');
+  assert.ok(cancelEvent);
+  assert.match(cancelEvent.message, /orderbook age \d+s exceeded max 1s for an order aged \d+s/);
+});
+
 test('live execution uses dynamic offset-based price drift when cancelling', async () => {
   const runtimeStatePath = tempStatePath();
   const config = testConfig({

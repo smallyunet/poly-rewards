@@ -31,6 +31,8 @@ type CancelReason = {
   planOffset?: number;
   driftOffsetRatio: number;
   ageSeconds: number;
+  orderbookAgeSeconds?: number;
+  maxOrderbookAgeSeconds: number;
   maxOrderHardAgeSeconds: number;
   staleOrderbook: boolean;
 };
@@ -115,7 +117,7 @@ export class RewardsExecutionService {
 
   private async cancelUnsafeManagedOrders(snapshot: RewardsDashboardState, openOrders: OpenOrderSummary[], counters: TickCounters, now: string): Promise<void> {
     const plansByToken = new Map(snapshot.quotePlans.filter((plan) => plan.eligible).map((plan) => [plan.tokenId, plan]));
-    const staleTokenIds = staleOrderbookTokenIds(snapshot, this.appConfig.rewards.maxOrderbookAgeSeconds);
+    const staleOrderbookAges = staleOrderbookAgesByToken(snapshot, this.appConfig.rewards.maxOrderbookAgeSeconds);
     const openById = new Map(openOrders.map((order) => [order.id, order]));
     const cancelIds: string[] = [];
     const cancelReasons = new Map<string, CancelReason>();
@@ -128,7 +130,8 @@ export class RewardsExecutionService {
       const ageSeconds = (Date.now() - new Date(order.createdAt).getTime()) / 1000;
       const priceDrift = order.side === 'BUY' && currentPlan ? Math.abs(currentPlan.price - order.price) : 0;
       const dynamicMaxDrift = currentPlan ? maxPriceDrift(this.appConfig.rewards.maxMidpointDrift, currentPlan.offset, this.appConfig.rewards.driftOffsetRatio) : this.appConfig.rewards.maxMidpointDrift;
-      const staleOrderbook = staleTokenIds.has(order.tokenId);
+      const orderbookAgeSeconds = staleOrderbookAges.get(order.tokenId);
+      const staleOrderbook = orderbookAgeSeconds != null;
       const reason = cancelReasonForOrder({
         currentPrice: order.side === 'SELL' ? order.price : currentPlan?.price,
         originalPrice: order.price,
@@ -137,6 +140,8 @@ export class RewardsExecutionService {
         planOffset: currentPlan?.offset,
         driftOffsetRatio: this.appConfig.rewards.driftOffsetRatio,
         ageSeconds,
+        orderbookAgeSeconds,
+        maxOrderbookAgeSeconds: this.appConfig.rewards.maxOrderbookAgeSeconds,
         maxOrderHardAgeSeconds: this.appConfig.rewards.maxOrderHardAgeSeconds,
         staleOrderbook,
       });
@@ -603,14 +608,14 @@ export class RewardsExecutionService {
   }
 }
 
-function staleOrderbookTokenIds(snapshot: RewardsDashboardState, maxAgeSeconds: number): Set<string> {
-  const stale = new Set<string>();
+function staleOrderbookAgesByToken(snapshot: RewardsDashboardState, maxAgeSeconds: number): Map<string, number> {
+  const stale = new Map<string, number>();
   const now = Date.now();
   for (const market of snapshot.candidates) {
     for (const book of [market.yesOrderbook, market.noOrderbook]) {
       if (!book) continue;
       const ageSeconds = (now - new Date(book.updatedAt).getTime()) / 1000;
-      if (!Number.isFinite(ageSeconds) || ageSeconds > maxAgeSeconds) stale.add(book.tokenId);
+      if (!Number.isFinite(ageSeconds) || ageSeconds > maxAgeSeconds) stale.set(book.tokenId, ageSeconds);
     }
   }
   return stale;
@@ -635,10 +640,10 @@ function cancelReasonForOrder(params: Omit<CancelReason, 'message'>): CancelReas
       message: `price drift ${params.priceDrift.toFixed(3)} exceeded max ${params.maxMidpointDrift.toFixed(3)} (${params.originalPrice.toFixed(3)} -> ${params.currentPrice.toFixed(3)})`,
     };
   }
-  if (params.staleOrderbook) {
+  if (params.staleOrderbook && params.ageSeconds > params.maxOrderbookAgeSeconds) {
     return {
       ...params,
-      message: 'orderbook is stale for this token',
+      message: `orderbook age ${Math.round(params.orderbookAgeSeconds ?? 0)}s exceeded max ${params.maxOrderbookAgeSeconds}s for an order aged ${Math.round(params.ageSeconds)}s`,
     };
   }
   return null;
