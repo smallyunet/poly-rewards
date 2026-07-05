@@ -1,7 +1,36 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, CheckCircle2, ClipboardList, Clock, Layers, ListChecks, RefreshCw, Shield, TrendingUp, Zap } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  BadgeDollarSign,
+  Banknote,
+  BarChart3,
+  CheckCircle2,
+  CircleDot,
+  Gauge,
+  Layers,
+  LineChart,
+  ListChecks,
+  PauseCircle,
+  RefreshCw,
+  ShieldCheck,
+  ShieldQuestion,
+  Sparkles,
+  WalletCards,
+  XCircle,
+  Zap,
+} from 'lucide-react';
 
-import type { RewardExecutionEvent, RewardFillRecord, RewardInventorySummary, RewardMarketCandidate, RewardQuotePlan, RewardsAppState, RuntimeLogRecord } from '../../../packages/shared/src';
+import type {
+  RewardExecutionEvent,
+  RewardFillRecord,
+  RewardInventorySummary,
+  RewardManagedOrder,
+  RewardMarketCandidate,
+  RewardQuotePlan,
+  RewardsAppState,
+  RuntimeLogRecord,
+} from '../../../packages/shared/src';
 import { api, DASHBOARD_REFRESH_MS } from './lib/api';
 
 type LoadState =
@@ -9,12 +38,13 @@ type LoadState =
   | { status: 'ready'; data: RewardsAppState }
   | { status: 'error'; error: string };
 
-type DashboardTab = 'markets' | 'execution' | 'inventory' | 'logs';
+type DashboardTab = 'strategy' | 'markets' | 'orders' | 'risk' | 'events';
+type Tone = 'good' | 'warn' | 'bad' | 'neutral';
 
 export function App() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<DashboardTab>('markets');
+  const [activeTab, setActiveTab] = useState<DashboardTab>('strategy');
 
   const load = async () => {
     try {
@@ -44,90 +74,127 @@ export function App() {
   };
 
   if (state.status === 'loading') {
-    return <Shell><EmptyState title="Loading rewards monitor" detail="Waiting for the first scanner snapshot." /></Shell>;
+    return <Shell><EmptyState title="Loading rewards workspace" detail="Waiting for the worker to publish the first scanner snapshot." /></Shell>;
   }
 
   if (state.status === 'error') {
-    return <Shell><EmptyState title="Rewards monitor unavailable" detail={state.error} tone="bad" /></Shell>;
+    return <Shell><EmptyState title="Rewards workspace unavailable" detail={state.error} tone="bad" /></Shell>;
   }
 
   const rewards = state.data.rewards;
   if (!rewards) {
-    return <Shell><EmptyState title="No rewards snapshot yet" detail="The worker has not recorded a rewards scan." /></Shell>;
+    return <Shell><EmptyState title="No rewards snapshot yet" detail="The API is up, but the scanner has not recorded a rewards scan." /></Shell>;
   }
 
-  const eligibleQuotes = rewards.quotePlans.filter((plan) => plan.eligible);
-  const topCandidates = rewards.candidates.slice(0, 8);
+  const insight = buildStrategyInsight(state.data);
   const execution = state.data.execution;
 
   return (
     <Shell>
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Polymarket Rewards Market Making</p>
-          <h1>Rewards Scanner</h1>
-          <p className="subtle">
-            {execution?.mode === 'live'
-              ? 'Live execution is gated by reconciliation, collateral, inventory, and active-order controls.'
-              : 'Monitor mode ranks markets and produces dry-run quote plans without posting live orders.'}
+      <header className="hero">
+        <div className="heroMain">
+          <div className="heroKicker">
+            <span className={`statusDot ${insight.modeTone}`} />
+            <span>Polymarket Rewards Market Making</span>
+          </div>
+          <h1>Strategy Control Room</h1>
+          <p>
+            Two-sided reward quoting with live order reconciliation, capital caps, inventory guards, and
+            cancel/repost controls. The dashboard focuses on whether the strategy is earning useful queue
+            exposure, not just whether orders are being posted.
           </p>
         </div>
-        <button className="iconButton" onClick={manualTick} disabled={refreshing} title="Run scanner now">
-          <RefreshCw size={18} className={refreshing ? 'spin' : ''} />
-          <span>Scan</span>
-        </button>
+        <div className="heroActions">
+          <div className={`modePill ${insight.modeTone}`}>
+            {execution?.mode === 'live' ? <Zap size={16} /> : <PauseCircle size={16} />}
+            <span>{execution?.mode === 'live' ? 'Live execution' : 'Monitor only'}</span>
+          </div>
+          <button className="primaryButton" onClick={manualTick} disabled={refreshing} title="Run scanner now">
+            <RefreshCw size={18} className={refreshing ? 'spin' : ''} />
+            <span>Run scan</span>
+          </button>
+        </div>
       </header>
 
-      <section className="metricGrid" aria-label="Rewards runtime metrics">
-        <Metric icon={<Activity size={18} />} label="Scanned" value={String(rewards.marketsScanned)} detail={`${rewards.candidates.length} ranked`} />
-        <Metric icon={<TrendingUp size={18} />} label="Planned" value={String(rewards.totals.plannedOrders)} detail={`${rewards.totals.plannedMarkets} markets`} tone={eligibleQuotes.length ? 'good' : 'neutral'} />
-        <Metric icon={<Shield size={18} />} label="Notional" value={formatUsd(rewards.totals.plannedNotional)} detail={`cap ${formatUsd(rewards.config.maxGlobalNotional)}`} />
-        <Metric icon={<Zap size={18} />} label="Execution" value={execution?.mode || state.data.runtime.executionMode} detail={`${execution?.totals.activeOrders ?? 0} active orders`} tone={execution?.mode === 'live' ? 'good' : 'neutral'} />
-        <Metric icon={<Clock size={18} />} label="Updated" value={formatTime(rewards.updatedAt)} detail={`every ${Math.round(state.data.runtime.tickIntervalMs / 1000)}s`} />
+      <section className="summaryGrid" aria-label="Strategy summary">
+        <SummaryCard icon={<Activity size={18} />} label="Market scan" value={String(rewards.marketsScanned)} detail={`${rewards.totals.plannedOrders} eligible plans`} />
+        <SummaryCard icon={<BadgeDollarSign size={18} />} label="Visible daily rewards" value={formatUsd(rewards.totals.dailyRewardVisible)} detail={`${rewards.totals.rejectedMarkets} rejected markets`} tone="good" />
+        <SummaryCard icon={<WalletCards size={18} />} label="Live exposure" value={formatUsd(execution?.totals.activeNotional ?? 0)} detail={`${execution?.totals.activeOrders ?? 0} active orders`} tone={insight.exposureTone} />
+        <SummaryCard icon={<Banknote size={18} />} label="Collateral" value={execution?.collateralBalance == null ? '-' : formatUsd(execution.collateralBalance)} detail={`reserve ${formatUsd(rewards.config.minCollateralBalance)}`} tone={insight.capitalTone} />
+        <SummaryCard icon={<LineChart size={18} />} label="Fills" value={formatShares(execution?.totals.filledSize ?? 0)} detail={`${formatUsd(execution?.totals.filledCostBasis ?? 0)} cost basis`} tone={(execution?.totals.filledSize ?? 0) > 0 ? 'good' : 'neutral'} />
+        <SummaryCard icon={<RefreshCw size={18} />} label="This tick" value={`${execution?.totals.postedThisTick ?? 0}/${execution?.totals.cancelledThisTick ?? 0}`} detail="posted / cancelled" tone={insight.churnTone} />
       </section>
 
-      <Tabs activeTab={activeTab} onChange={setActiveTab} />
+      <nav className="tabs" aria-label="Dashboard sections">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`tabButton ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+            aria-current={activeTab === tab.id ? 'page' : undefined}
+          >
+            {tab.icon}
+            <span>{tab.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === 'strategy' ? (
+        <section className="strategyLayout tabPanel">
+          <Panel
+            title="Strategy Readout"
+            subtitle="The current state translated into operator decisions."
+            action={<Badge tone={insight.overallTone}>{insight.overallLabel}</Badge>}
+          >
+            <StrategyReadout state={state.data} insight={insight} />
+          </Panel>
+          <Panel title="Plan Quality" subtitle="Reward fit, min-size fit, and capital pressure across planned quotes.">
+            <PlanQuality state={state.data} insight={insight} />
+          </Panel>
+        </section>
+      ) : null}
 
       {activeTab === 'markets' ? (
-        <section className="contentGrid tabPanel">
-          <Panel title="Top Candidates" subtitle="Ranked by reward score minus risk penalties">
-            <CandidateTable candidates={topCandidates} />
+        <section className="workspaceGrid tabPanel">
+          <Panel title="Ranked Markets" subtitle="Reward candidates ordered by net score after risk penalties.">
+            <MarketList candidates={rewards.candidates.slice(0, 10)} />
           </Panel>
-          <Panel title="Quote Plans" subtitle="BUY YES / BUY NO plans that pass risk caps">
-            <QuoteTable plans={rewards.quotePlans} />
+          <Panel title="Quote Plans" subtitle="Current BUY YES / BUY NO plan set, including rewards min-size warnings.">
+            <QuotePlanList plans={rewards.quotePlans} candidates={rewards.candidates} />
           </Panel>
         </section>
       ) : null}
 
-      {activeTab === 'execution' ? (
-        <section className="contentGrid lower tabPanel">
-          <Panel title="Risk Controls" subtitle="Current scanner and quote planner guardrails">
+      {activeTab === 'orders' ? (
+        <section className="workspaceGrid ordersGrid tabPanel">
+          <Panel title="Active Orders" subtitle="Managed orders currently visible in CLOB open-order reconciliation.">
+            <ActiveOrdersTable orders={execution?.activeOrders || []} />
+          </Panel>
+          <Panel title="Inventory And Fills" subtitle="Matched exposure from managed orders.">
+            <InventoryAndFills inventory={execution?.inventory || []} fills={execution?.recentFills || []} />
+          </Panel>
+        </section>
+      ) : null}
+
+      {activeTab === 'risk' ? (
+        <section className="workspaceGrid tabPanel">
+          <Panel title="Guardrails" subtitle="Runtime constraints that decide whether a quote can be posted.">
             <RiskControls state={state.data} />
           </Panel>
-          <Panel title="Execution" subtitle="Live order reconciliation and guarded posting state">
-            <ExecutionPanel state={state.data} />
+          <Panel title="Risk Blocks" subtitle="Hard filters and market risk tags surfaced by the scanner.">
+            <RiskBreakdown state={state.data} />
           </Panel>
         </section>
       ) : null}
 
-      {activeTab === 'inventory' ? (
-        <section className="contentGrid lower tabPanel">
-          <Panel title="Inventory" subtitle="Filled exposure and open managed buy size by token">
-            <InventoryTable rows={execution?.inventory || []} />
-          </Panel>
-          <Panel title="Fills" subtitle="Recent matched or terminal-reconciled managed order fills">
-            <FillTable fills={execution?.recentFills || []} />
-          </Panel>
-        </section>
-      ) : null}
-
-      {activeTab === 'logs' ? (
-        <section className="contentGrid lower tabPanel">
-          <Panel title="Runtime Logs" subtitle="Worker and API events">
-            <RuntimeLogs logs={state.data.runtimeLogs.slice(0, 8)} diagnostics={rewards.diagnostics} />
-          </Panel>
-          <Panel title="Execution Events" subtitle="Recent post, cancel, skip, and reconciliation decisions">
+      {activeTab === 'events' ? (
+        <section className="workspaceGrid tabPanel">
+          <Panel title="Execution Events" subtitle="Recent post, cancel, skip, and reconciliation decisions.">
             <ExecutionEvents events={execution?.recentEvents || []} />
+          </Panel>
+          <Panel title="Runtime Logs" subtitle="Worker diagnostics and scheduled tick summaries.">
+            <RuntimeLogs logs={state.data.runtimeLogs.slice(0, 10)} diagnostics={rewards.diagnostics} />
           </Panel>
         </section>
       ) : null}
@@ -135,24 +202,32 @@ export function App() {
   );
 }
 
+const tabs: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = [
+  { id: 'strategy', label: 'Strategy', icon: <Sparkles size={16} /> },
+  { id: 'markets', label: 'Markets', icon: <Layers size={16} /> },
+  { id: 'orders', label: 'Orders', icon: <ListChecks size={16} /> },
+  { id: 'risk', label: 'Risk', icon: <ShieldQuestion size={16} /> },
+  { id: 'events', label: 'Events', icon: <AlertTriangle size={16} /> },
+];
+
 function Shell({ children }: { children: React.ReactNode }) {
   return <main className="appShell">{children}</main>;
 }
 
-function Metric({ icon, label, value, detail, tone = 'neutral' }: { icon: React.ReactNode; label: string; value: string; detail: string; tone?: 'good' | 'bad' | 'neutral' }) {
+function SummaryCard({ icon, label, value, detail, tone = 'neutral' }: { icon: React.ReactNode; label: string; value: string; detail: string; tone?: Tone }) {
   return (
-    <div className={`metricCard ${tone}`}>
-      <div className="metricIcon">{icon}</div>
+    <article className={`summaryCard ${tone}`}>
+      <div className="summaryIcon">{icon}</div>
       <div>
         <span>{label}</span>
         <strong>{value}</strong>
         <small>{detail}</small>
       </div>
-    </div>
+    </article>
   );
 }
 
-function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+function Panel({ title, subtitle, action, children }: { title: string; subtitle: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="panel">
       <div className="panelHeader">
@@ -160,73 +235,178 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
           <h2>{title}</h2>
           <p>{subtitle}</p>
         </div>
+        {action ? <div className="panelAction">{action}</div> : null}
       </div>
       {children}
     </section>
   );
 }
 
-function Tabs({ activeTab, onChange }: { activeTab: DashboardTab; onChange: (tab: DashboardTab) => void }) {
-  const tabs: Array<{ id: DashboardTab; label: string; icon: React.ReactNode }> = [
-    { id: 'markets', label: 'Markets', icon: <Layers size={16} /> },
-    { id: 'execution', label: 'Execution', icon: <ListChecks size={16} /> },
-    { id: 'inventory', label: 'Inventory', icon: <ClipboardList size={16} /> },
-    { id: 'logs', label: 'Logs', icon: <AlertTriangle size={16} /> },
+function StrategyReadout({ state, insight }: { state: RewardsAppState; insight: StrategyInsight }) {
+  const execution = state.execution;
+  const rewards = state.rewards!;
+  const rows = [
+    {
+      icon: insight.minSizeCompliantPlans === insight.eligiblePlans ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />,
+      title: 'Rewards min-size fit',
+      detail: `${insight.minSizeCompliantPlans}/${insight.eligiblePlans} planned quotes meet the market reward minimum size.`,
+      tone: insight.minSizeTone,
+    },
+    {
+      icon: <Gauge size={18} />,
+      title: 'Capital pressure',
+      detail: `${formatUsd(rewards.totals.plannedNotional)} planned against ${execution?.collateralBalance == null ? 'unknown' : formatUsd(execution.collateralBalance)} available collateral.`,
+      tone: insight.capitalTone,
+    },
+    {
+      icon: <RefreshCw size={18} />,
+      title: 'Order churn',
+      detail: `${execution?.totals.postedThisTick ?? 0} posted and ${execution?.totals.cancelledThisTick ?? 0} cancelled in the latest execution pass.`,
+      tone: insight.churnTone,
+    },
+    {
+      icon: <ShieldCheck size={18} />,
+      title: 'Execution boundary',
+      detail: execution?.mode === 'live'
+        ? 'Live posting is enabled after credential, open-order, collateral, active-order, and inventory checks.'
+        : 'Monitor mode is producing quote plans without posting live orders.',
+      tone: insight.modeTone,
+    },
   ];
+
   return (
-    <nav className="tabs" aria-label="Dashboard sections">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={`tabButton ${activeTab === tab.id ? 'active' : ''}`}
-          onClick={() => onChange(tab.id)}
-          aria-current={activeTab === tab.id ? 'page' : undefined}
-        >
-          {tab.icon}
-          <span>{tab.label}</span>
-        </button>
+    <div className="readoutList">
+      {rows.map((row) => (
+        <article className={`readoutItem ${row.tone}`} key={row.title}>
+          <div className="readoutIcon">{row.icon}</div>
+          <div>
+            <h3>{row.title}</h3>
+            <p>{row.detail}</p>
+          </div>
+        </article>
       ))}
-    </nav>
+    </div>
   );
 }
 
-function CandidateTable({ candidates }: { candidates: RewardMarketCandidate[] }) {
+function PlanQuality({ state, insight }: { state: RewardsAppState; insight: StrategyInsight }) {
+  const rewards = state.rewards!;
+  const execution = state.execution;
+  const activeByLabel = groupOrdersByLabel(execution?.activeOrders || []);
+  return (
+    <div className="qualityGrid">
+      <QualityMeter label="Eligible quotes" value={insight.eligiblePlans} total={rewards.quotePlans.length || 1} />
+      <QualityMeter label="Min-size compliant" value={insight.minSizeCompliantPlans} total={Math.max(insight.eligiblePlans, 1)} tone={insight.minSizeTone} />
+      <QualityMeter label="Active markets" value={new Set((execution?.activeOrders || []).map((order) => order.marketId)).size} total={rewards.config.maxOpenMarkets} />
+      <div className="splitBox">
+        <span>Outcome exposure</span>
+        <strong>{activeByLabel.YES.count} YES / {activeByLabel.NO.count} NO</strong>
+        <p>{formatUsd(activeByLabel.YES.notional)} YES notional, {formatUsd(activeByLabel.NO.notional)} NO notional.</p>
+      </div>
+    </div>
+  );
+}
+
+function QualityMeter({ label, value, total, tone = 'neutral' }: { label: string; value: number; total: number; tone?: Tone }) {
+  const pct = Math.min(100, Math.max(0, total ? (value / total) * 100 : 0));
+  return (
+    <div className={`qualityMeter ${tone}`}>
+      <div>
+        <span>{label}</span>
+        <strong>{value}<small>/{total}</small></strong>
+      </div>
+      <div className="meterTrack" aria-hidden="true">
+        <span style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function MarketList({ candidates }: { candidates: RewardMarketCandidate[] }) {
   if (!candidates.length) return <EmptyState title="No candidates" detail="No reward markets passed scanner ingestion yet." />;
+  return (
+    <div className="marketList">
+      {candidates.map((market) => (
+        <article className="marketRow" key={market.id}>
+          <div className="marketMain">
+            <div className="marketTitleLine">
+              <h3>{market.question}</h3>
+              {market.rejectReasons.length ? <Badge tone="bad">blocked</Badge> : <Badge tone="good">eligible</Badge>}
+            </div>
+            <p>{market.category || market.slug || shortId(market.conditionId || market.id)}</p>
+            <TagList tags={market.riskTags} />
+          </div>
+          <div className="marketStats">
+            <Stat label="Reward" value={formatUsd(market.dailyReward)} />
+            <Stat label="Min size" value={formatShares(market.minSize)} tone={market.minSize > 5 ? 'warn' : 'neutral'} />
+            <Stat label="Max spread" value={formatCents(market.maxSpread)} />
+            <Stat label="Mid" value={market.adjustedMidpoint == null ? '-' : market.adjustedMidpoint.toFixed(3)} />
+            <Stat label="Net" value={market.netScore.toFixed(3)} tone={market.netScore > 0 ? 'good' : 'bad'} />
+          </div>
+          {market.rejectReasons.length ? <ReasonList reasons={market.rejectReasons} /> : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function QuotePlanList({ plans, candidates }: { plans: RewardQuotePlan[]; candidates: RewardMarketCandidate[] }) {
+  const marketById = new Map(candidates.map((market) => [market.id, market]));
+  const visible = plans.slice(0, 18);
+  if (!visible.length) return <EmptyState title="No quote plans" detail="No ranked market currently passes the quote planner." />;
+  return (
+    <div className="quoteList">
+      {visible.map((plan) => {
+        const market = marketById.get(plan.marketId);
+        const minSize = market?.minSize ?? 0;
+        const belowMin = minSize > plan.size;
+        return (
+          <article className={`quoteRow ${plan.eligible ? '' : 'muted'}`} key={plan.id}>
+            <div>
+              <div className="quoteTop">
+                <Badge tone={plan.label === 'YES' ? 'good' : 'neutral'}>{plan.label} BUY</Badge>
+                {belowMin ? <Badge tone="warn">below rewards min</Badge> : <Badge tone="good">reward-sized</Badge>}
+              </div>
+              <p>{market?.question || shortId(plan.marketId)}</p>
+            </div>
+            <div className="quoteNumbers">
+              <Stat label="Price" value={plan.price.toFixed(3)} />
+              <Stat label="Size" value={formatShares(plan.size)} />
+              <Stat label="Notional" value={formatUsd(plan.notional)} />
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function ActiveOrdersTable({ orders }: { orders: RewardManagedOrder[] }) {
+  if (!orders.length) return <EmptyState title="No active orders" detail="No managed orders are currently open." />;
   return (
     <div className="tableWrap">
       <table>
         <thead>
           <tr>
-            <th>Market</th>
-            <th>Reward</th>
-            <th>Min</th>
-            <th>Max Spread</th>
-            <th>Mid</th>
-            <th>Net</th>
-            <th>Status</th>
+            <th>Outcome</th>
+            <th>Price</th>
+            <th>Open</th>
+            <th>Filled</th>
+            <th>Notional</th>
+            <th>Age</th>
+            <th>Order</th>
           </tr>
         </thead>
         <tbody>
-          {candidates.map((market) => (
-            <tr key={market.id}>
-              <td className="marketCell">
-                <strong>{market.question}</strong>
-                <span>{market.category || market.slug || market.conditionId || market.id}</span>
-                <TagList tags={market.riskTags} />
-              </td>
-              <td>{formatUsd(market.dailyReward)}</td>
-              <td>{formatShares(market.minSize)}</td>
-              <td>{formatPct(market.maxSpread)}</td>
-              <td>{market.adjustedMidpoint == null ? '-' : market.adjustedMidpoint.toFixed(3)}</td>
-              <td className={market.netScore > 0 ? 'positive' : 'negative'}>{market.netScore.toFixed(3)}</td>
-              <td>
-                {market.rejectReasons.length ? (
-                  <ReasonList reasons={market.rejectReasons} />
-                ) : (
-                  <Badge tone="good"><CheckCircle2 size={14} /> eligible</Badge>
-                )}
-              </td>
+          {orders.slice(0, 18).map((order) => (
+            <tr key={order.orderId}>
+              <td><Badge tone={order.label === 'YES' ? 'good' : 'neutral'}>{order.label}</Badge></td>
+              <td className="mono">{order.price.toFixed(3)}</td>
+              <td className="mono">{formatShares(order.remainingSize ?? order.size)}</td>
+              <td className="mono">{formatShares(order.filledSize)}</td>
+              <td className="mono">{formatUsd(order.price * (order.remainingSize ?? order.size))}</td>
+              <td className="mono">{formatAge(order.createdAt)}</td>
+              <td className="mono">{shortId(order.orderId)}</td>
             </tr>
           ))}
         </tbody>
@@ -235,35 +415,37 @@ function CandidateTable({ candidates }: { candidates: RewardMarketCandidate[] })
   );
 }
 
-function QuoteTable({ plans }: { plans: RewardQuotePlan[] }) {
-  const visible = plans.slice(0, 12);
-  if (!visible.length) return <EmptyState title="No quote plans" detail="No ranked market currently passes the dry-run quote planner." />;
+function InventoryAndFills({ inventory, fills }: { inventory: RewardInventorySummary[]; fills: RewardFillRecord[] }) {
   return (
-    <div className="tableWrap compact">
-      <table>
-        <thead>
-          <tr>
-            <th>Market</th>
-            <th>Side</th>
-            <th>Price</th>
-            <th>Size</th>
-            <th>Notional</th>
-            <th>Reason</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((plan) => (
-            <tr key={plan.id}>
-              <td className="mono">{shortId(plan.marketId)}</td>
-              <td><Badge tone={plan.label === 'YES' ? 'good' : 'neutral'}>{plan.label} BUY</Badge></td>
-              <td className="mono">{plan.price.toFixed(3)}</td>
-              <td className="mono">{formatShares(plan.size)}</td>
-              <td className="mono">{formatUsd(plan.notional)}</td>
-              <td className="smallText">{plan.reason}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="stackedPanel">
+      <div className="miniSection">
+        <h3>Inventory</h3>
+        {inventory.length ? (
+          <div className="miniRows">
+            {inventory.slice(0, 8).map((row) => (
+              <div className="miniRow" key={row.tokenId}>
+                <span>{shortId(row.marketId)}</span>
+                <strong>{row.label} {formatShares(row.openBuySize)} open</strong>
+                <small>{formatShares(row.filledSize)} filled at {row.avgEntryPrice == null ? '-' : row.avgEntryPrice.toFixed(3)}</small>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState title="No inventory" detail="No managed order fills have been recorded yet." />}
+      </div>
+      <div className="miniSection">
+        <h3>Recent fills</h3>
+        {fills.length ? (
+          <div className="miniRows">
+            {fills.slice(0, 8).map((fill) => (
+              <div className="miniRow" key={fill.id}>
+                <span>{formatTime(fill.createdAt)}</span>
+                <strong>{fill.label} {formatShares(fill.size)} at {fill.price.toFixed(3)}</strong>
+                <small>{formatUsd(fill.notional)} via {fill.source}</small>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState title="No fills" detail="No match deltas or terminal reconciliations have been recorded." />}
+      </div>
     </div>
   );
 }
@@ -271,22 +453,24 @@ function QuoteTable({ plans }: { plans: RewardQuotePlan[] }) {
 function RiskControls({ state }: { state: RewardsAppState }) {
   const config = state.rewards!.config;
   const rows = [
-    ['Execution mode', state.execution?.mode || state.runtime.executionMode],
-    ['Global notional cap', formatUsd(config.maxGlobalNotional)],
-    ['Per-market notional cap', formatUsd(config.maxMarketNotional)],
-    ['Quote size', formatShares(config.quoteSize)],
-    ['Quote offset', config.quoteOffset.toFixed(3)],
-    ['Min daily reward', formatUsd(config.minDailyReward)],
-    ['Min seconds to close', `${Math.round(config.minSecondsToClose / 3600)}h`],
-    ['Max open markets', String(config.maxOpenMarkets)],
-    ['Max inventory / outcome', formatShares(config.maxInventorySharesPerOutcome)],
-    ['Collateral reserve', formatUsd(config.minCollateralBalance)],
-    ['Max active / market', String(config.maxActiveOrdersPerMarket)],
-  ];
+    ['Execution mode', state.execution?.mode || state.runtime.executionMode, state.execution?.mode === 'live' ? 'good' : 'neutral'],
+    ['Global notional cap', formatUsd(config.maxGlobalNotional), 'neutral'],
+    ['Per-market notional cap', formatUsd(config.maxMarketNotional), 'neutral'],
+    ['Quote size', formatShares(config.quoteSize), 'neutral'],
+    ['Quote offset', config.quoteOffset.toFixed(3), 'neutral'],
+    ['Min daily reward', formatUsd(config.minDailyReward), 'neutral'],
+    ['Min time to close', `${Math.round(config.minSecondsToClose / 3600)}h`, 'neutral'],
+    ['Max order age', `${config.maxOrderAgeSeconds}s`, config.maxOrderAgeSeconds < 120 ? 'warn' : 'neutral'],
+    ['Orderbook max age', `${config.maxOrderbookAgeSeconds}s`, 'neutral'],
+    ['Inventory cap / outcome', formatShares(config.maxInventorySharesPerOutcome), 'neutral'],
+    ['Collateral reserve', formatUsd(config.minCollateralBalance), config.minCollateralBalance <= 0 ? 'warn' : 'neutral'],
+    ['Max active / market', String(config.maxActiveOrdersPerMarket), 'neutral'],
+  ] as Array<[string, string, Tone]>;
+
   return (
     <div className="controlGrid">
-      {rows.map(([label, value]) => (
-        <div className="controlRow" key={label}>
+      {rows.map(([label, value, tone]) => (
+        <div className={`controlRow ${tone}`} key={label}>
           <span>{label}</span>
           <strong>{value}</strong>
         </div>
@@ -295,94 +479,35 @@ function RiskControls({ state }: { state: RewardsAppState }) {
   );
 }
 
-function ExecutionPanel({ state }: { state: RewardsAppState }) {
-  const execution = state.execution;
-  if (!execution) return <EmptyState title="No execution state" detail="The worker has not recorded execution reconciliation yet." />;
-  const rows = [
-    ['Mode', execution.mode],
-    ['Dry run', execution.dryRun ? 'yes' : 'no'],
-    ['Active orders', String(execution.totals.activeOrders)],
-    ['Active notional', formatUsd(execution.totals.activeNotional)],
-    ['Filled size', formatShares(execution.totals.filledSize)],
-    ['Filled cost basis', formatUsd(execution.totals.filledCostBasis)],
-    ['Posted this tick', String(execution.totals.postedThisTick)],
-    ['Cancelled this tick', String(execution.totals.cancelledThisTick)],
-    ['Skipped this tick', String(execution.totals.skippedThisTick)],
-    ['Fills this tick', String(execution.totals.fillsThisTick)],
-    ['Collateral', execution.collateralBalance == null ? '-' : formatUsd(execution.collateralBalance)],
-  ];
+function RiskBreakdown({ state }: { state: RewardsAppState }) {
+  const rewards = state.rewards!;
+  const tagCounts = countStrings(rewards.candidates.flatMap((candidate) => candidate.riskTags));
+  const reasonCounts = countStrings(rewards.candidates.flatMap((candidate) => candidate.rejectReasons));
   return (
-    <div className="controlGrid">
-      {rows.map(([label, value]) => (
-        <div className="controlRow" key={label}>
+    <div className="riskColumns">
+      <RiskColumn title="Risk tags" items={tagCounts} empty="No risk tags emitted." />
+      <RiskColumn title="Reject reasons" items={reasonCounts} empty="No hard reject reasons in the visible candidate set." />
+      <div className="riskNote">
+        <BarChart3 size={18} />
+        <p>
+          Minimum incentive size is currently a warning signal, not a hard filter. Orders below the market
+          min size can be posted but may not earn rewards credit.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function RiskColumn({ title, items, empty }: { title: string; items: Array<[string, number]>; empty: string }) {
+  return (
+    <div className="riskColumn">
+      <h3>{title}</h3>
+      {items.length ? items.slice(0, 10).map(([label, count]) => (
+        <div className="riskRow" key={label}>
           <span>{label}</span>
-          <strong>{value}</strong>
+          <strong>{count}</strong>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function InventoryTable({ rows }: { rows: RewardInventorySummary[] }) {
-  if (!rows.length) return <EmptyState title="No inventory" detail="No managed order fills have been recorded yet." />;
-  return (
-    <div className="tableWrap compact">
-      <table>
-        <thead>
-          <tr>
-            <th>Market</th>
-            <th>Outcome</th>
-            <th>Filled</th>
-            <th>Open Buy</th>
-            <th>Avg Entry</th>
-            <th>Cost</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.slice(0, 12).map((row) => (
-            <tr key={row.tokenId}>
-              <td className="mono">{shortId(row.marketId)}</td>
-              <td><Badge tone={row.label === 'YES' ? 'good' : 'neutral'}>{row.label}</Badge></td>
-              <td className="mono">{formatShares(row.filledSize)}</td>
-              <td className="mono">{formatShares(row.openBuySize)}</td>
-              <td className="mono">{row.avgEntryPrice == null ? '-' : row.avgEntryPrice.toFixed(3)}</td>
-              <td className="mono">{formatUsd(row.costBasis)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function FillTable({ fills }: { fills: RewardFillRecord[] }) {
-  if (!fills.length) return <EmptyState title="No fills" detail="No managed order match deltas or terminal reconciliations have been recorded." />;
-  return (
-    <div className="tableWrap compact">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Outcome</th>
-            <th>Price</th>
-            <th>Size</th>
-            <th>Cost</th>
-            <th>Source</th>
-          </tr>
-        </thead>
-        <tbody>
-          {fills.slice(0, 12).map((fill) => (
-            <tr key={fill.id}>
-              <td className="mono">{formatTime(fill.createdAt)}</td>
-              <td><Badge tone={fill.label === 'YES' ? 'good' : 'neutral'}>{fill.label}</Badge></td>
-              <td className="mono">{fill.price.toFixed(3)}</td>
-              <td className="mono">{formatShares(fill.size)}</td>
-              <td className="mono">{formatUsd(fill.notional)}</td>
-              <td className="smallText">{fill.source}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      )) : <p className="mutedText">{empty}</p>}
     </div>
   );
 }
@@ -390,10 +515,10 @@ function FillTable({ fills }: { fills: RewardFillRecord[] }) {
 function ExecutionEvents({ events }: { events: RewardExecutionEvent[] }) {
   if (!events.length) return <EmptyState title="No execution events" detail="Monitor mode does not post, cancel, or reconcile live orders." />;
   return (
-    <div className="logList">
-      {events.slice(0, 10).map((event) => (
-        <div className={`logRow ${event.level}`} key={event.id}>
-          <AlertTriangle size={14} />
+    <div className="eventList">
+      {events.slice(0, 14).map((event) => (
+        <div className={`eventRow ${event.level}`} key={event.id}>
+          <EventIcon event={event} />
           <span>{formatTime(event.createdAt)}</span>
           <p>{event.message}</p>
         </div>
@@ -406,13 +531,13 @@ function RuntimeLogs({ logs, diagnostics }: { logs: RuntimeLogRecord[]; diagnost
   const rows = useMemo(() => [
     ...diagnostics.map((message) => ({ id: `diag-${message}`, level: 'warn' as const, createdAt: '', message })),
     ...logs,
-  ].slice(0, 10), [logs, diagnostics]);
+  ].slice(0, 14), [logs, diagnostics]);
   if (!rows.length) return <EmptyState title="No logs" detail="The worker has not emitted diagnostics." />;
   return (
-    <div className="logList">
+    <div className="eventList">
       {rows.map((log) => (
-        <div className={`logRow ${log.level}`} key={log.id}>
-          <AlertTriangle size={14} />
+        <div className={`eventRow ${log.level}`} key={log.id}>
+          <AlertTriangle size={15} />
           <span>{log.createdAt ? formatTime(log.createdAt) : 'diag'}</span>
           <p>{log.message}</p>
         </div>
@@ -421,8 +546,24 @@ function RuntimeLogs({ logs, diagnostics }: { logs: RuntimeLogRecord[]; diagnost
   );
 }
 
+function EventIcon({ event }: { event: RewardExecutionEvent }) {
+  if (event.action === 'post') return <CircleDot size={15} />;
+  if (event.action === 'cancel') return <XCircle size={15} />;
+  if (event.action === 'reconcile') return <CheckCircle2 size={15} />;
+  return <AlertTriangle size={15} />;
+}
+
+function Stat({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: Tone }) {
+  return (
+    <div className={`stat ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function TagList({ tags }: { tags: string[] }) {
-  return <div className="tagList">{tags.slice(0, 4).map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>;
+  return <div className="tagList">{tags.slice(0, 5).map((tag) => <Badge key={tag} tone={tagTone(tag)}>{tag}</Badge>)}</div>;
 }
 
 function ReasonList({ reasons }: { reasons: string[] }) {
@@ -433,7 +574,7 @@ function ReasonList({ reasons }: { reasons: string[] }) {
   );
 }
 
-function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'good' | 'bad' | 'neutral' }) {
+function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: Tone }) {
   return <span className={`badge ${tone}`}>{children}</span>;
 }
 
@@ -446,6 +587,58 @@ function EmptyState({ title, detail, tone = 'neutral' }: { title: string; detail
   );
 }
 
+type StrategyInsight = {
+  eligiblePlans: number;
+  minSizeCompliantPlans: number;
+  minSizeTone: Tone;
+  capitalTone: Tone;
+  churnTone: Tone;
+  exposureTone: Tone;
+  modeTone: Tone;
+  overallTone: Tone;
+  overallLabel: string;
+};
+
+function buildStrategyInsight(state: RewardsAppState): StrategyInsight {
+  const rewards = state.rewards!;
+  const execution = state.execution;
+  const marketById = new Map(rewards.candidates.map((market) => [market.id, market]));
+  const eligiblePlans = rewards.quotePlans.filter((plan) => plan.eligible);
+  const minSizeCompliantPlans = eligiblePlans.filter((plan) => plan.size >= (marketById.get(plan.marketId)?.minSize ?? 0)).length;
+  const collateral = execution?.collateralBalance ?? 0;
+  const plannedNotional = rewards.totals.plannedNotional;
+  const minSizeTone: Tone = eligiblePlans.length === 0 || minSizeCompliantPlans === eligiblePlans.length ? 'good' : minSizeCompliantPlans === 0 ? 'bad' : 'warn';
+  const capitalTone: Tone = execution?.mode === 'live' && collateral > 0 && plannedNotional > collateral ? 'warn' : 'good';
+  const churn = (execution?.totals.postedThisTick ?? 0) + (execution?.totals.cancelledThisTick ?? 0);
+  const churnTone: Tone = churn >= 6 ? 'warn' : 'neutral';
+  const exposureTone: Tone = (execution?.totals.activeOrders ?? 0) > 0 ? 'good' : 'neutral';
+  const modeTone: Tone = execution?.mode === 'live' ? 'good' : 'neutral';
+  const overallTone: Tone = minSizeTone === 'bad' ? 'bad' : capitalTone === 'warn' || churnTone === 'warn' || minSizeTone === 'warn' ? 'warn' : 'good';
+  const overallLabel = overallTone === 'good' ? 'healthy' : overallTone === 'warn' ? 'needs attention' : 'not reward-ready';
+  return { eligiblePlans: eligiblePlans.length, minSizeCompliantPlans, minSizeTone, capitalTone, churnTone, exposureTone, modeTone, overallTone, overallLabel };
+}
+
+function groupOrdersByLabel(orders: RewardManagedOrder[]) {
+  return orders.reduce((acc, order) => {
+    const notional = order.price * (order.remainingSize ?? order.size);
+    acc[order.label].count += 1;
+    acc[order.label].notional += notional;
+    return acc;
+  }, { YES: { count: 0, notional: 0 }, NO: { count: 0, notional: 0 } });
+}
+
+function countStrings(values: string[]) {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function tagTone(tag: string): Tone {
+  if (/good|low-competition|wide|eligible|low-min/.test(tag)) return 'good';
+  if (/missing|near|live|crypto|breaking|ambiguous|thin|high/.test(tag)) return 'warn';
+  return 'neutral';
+}
+
 function formatUsd(value: number) {
   return `$${value.toFixed(value >= 100 ? 0 : 2)}`;
 }
@@ -454,13 +647,20 @@ function formatShares(value: number) {
   return value.toFixed(value >= 100 ? 0 : 2);
 }
 
-function formatPct(value: number) {
+function formatCents(value: number) {
   return value ? `${(value * 100).toFixed(1)}c` : '-';
 }
 
 function formatTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatAge(value: string) {
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  if (!Number.isFinite(ageSeconds)) return '-';
+  if (ageSeconds < 60) return `${ageSeconds}s`;
+  return `${Math.floor(ageSeconds / 60)}m ${ageSeconds % 60}s`;
 }
 
 function shortId(value: string) {
