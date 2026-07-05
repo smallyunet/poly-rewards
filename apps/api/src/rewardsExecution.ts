@@ -198,6 +198,18 @@ export class RewardsExecutionService {
         continue;
       }
 
+      const miniShares = miniSharesForMarket(snapshot, bundle.marketId);
+      if (miniShares == null || !plansUseMiniShares([yesPlan, noPlan], miniShares)) {
+        counters.skippedThisTick += bundle.plans.length;
+        this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because YES+NO quote sizes must both equal reward mini shares.`, {
+          marketId: bundle.marketId,
+          conditionId: bundle.conditionId,
+          miniShares,
+          plans: [yesPlan, noPlan].map(planEventDetails),
+        });
+        continue;
+      }
+
       const existingOrders: ExistingOrderMatch[] = [];
       const missingPlans: RewardQuotePlan[] = [];
       for (const plan of [yesPlan, noPlan]) {
@@ -673,6 +685,15 @@ function groupEligiblePlansByMarket(plans: RewardQuotePlan[]): MarketPlanBundle[
     }
   }
   return Array.from(byMarket.values()).sort((a, b) => sum(a.plans.map((plan) => plan.notional)) - sum(b.plans.map((plan) => plan.notional)));
+}
+
+function miniSharesForMarket(snapshot: RewardsDashboardState, marketId: string): number | null {
+  const market = snapshot.candidates.find((candidate) => candidate.id === marketId);
+  return market && market.minSize > 0 ? roundShares(market.minSize) : null;
+}
+
+function plansUseMiniShares(plans: RewardQuotePlan[], miniShares: number): boolean {
+  return plans.every((plan) => roundShares(plan.size) === miniShares);
 }
 
 function toIntent(plan: RewardQuotePlan): RewardLimitIntent {

@@ -50,6 +50,10 @@ test('live execution only posts complete affordable YES/NO market bundles', asyn
   });
   const client = fakeClient({ collateralBalance: 5 });
   const snapshot = testSnapshot();
+  snapshot.candidates = [
+    { ...snapshot.candidates[0], id: 'large-market', conditionId: 'large-condition', minSize: 10 },
+    { ...snapshot.candidates[0], id: 'small-market', conditionId: 'small-condition', minSize: 5 },
+  ];
   snapshot.quotePlans = [
     { ...snapshot.quotePlans[0], id: 'large-yes', marketId: 'large-market', label: 'YES', tokenId: 'large-yes-token', price: 0.4, size: 10, notional: 4 },
     { ...snapshot.quotePlans[1], id: 'large-no', marketId: 'large-market', label: 'NO', tokenId: 'large-no-token', price: 0.4, size: 10, notional: 4 },
@@ -64,6 +68,28 @@ test('live execution only posts complete affordable YES/NO market bundles', asyn
   assert.equal(state.totals.skippedThisTick, 2);
   assert.deepEqual(client.posted.map((intent) => intent.id).sort(), ['small-no', 'small-yes']);
   assert.match(skipEventMessage(state, 'YES+NO needs $8.00'), /only \$1\.00 is spendable/);
+});
+
+test('live execution requires YES and NO quote sizes to equal market mini shares', async () => {
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+  });
+  const snapshot = testSnapshot();
+  snapshot.quotePlans = [
+    { ...snapshot.quotePlans[0], size: 3, notional: 1.46 },
+    { ...snapshot.quotePlans[1], size: 4, notional: 1.94 },
+  ];
+  const client = fakeClient();
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(snapshot);
+
+  assert.equal(state.totals.postedThisTick, 0);
+  assert.equal(state.totals.skippedThisTick, 2);
+  assert.equal(client.calls.post, 0);
+  assert.match(skipEventMessage(state, 'quote sizes must both equal reward mini shares'), /quote sizes must both equal reward mini shares/);
 });
 
 test('live execution skips when an external open order already exists on a token', async () => {
