@@ -34,8 +34,9 @@ cd ~/apps/poly-rewards
 nano .env
 ```
 
-Keep the rewards runtime monitor-only until scanner output, candidate ranking,
-quote plans, and orderbook enrichment have been reviewed:
+Keep the rewards runtime in monitor mode until scanner output, candidate
+ranking, quote plans, orderbook enrichment, and whitelist IDs have been
+reviewed:
 
 ```dotenv
 EXECUTION_MODE=monitor
@@ -44,6 +45,11 @@ REWARDS_LIVE_WHITELIST_ONLY=true
 REWARDS_GLOBAL_MAX_NOTIONAL=100
 REWARDS_MARKET_MAX_NOTIONAL=10
 ```
+
+Only switch to live mode after setting wallet credentials and execution caps
+such as `REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME`,
+`REWARDS_MIN_COLLATERAL_BALANCE`, and
+`REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET`.
 
 Caddy is configured as the project-local HTTP proxy by default. Keep this value
 when another server-level proxy owns the public domain and forwards traffic to

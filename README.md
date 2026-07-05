@@ -2,10 +2,11 @@
 
 Polymarket rewards market-making scanner and operator dashboard.
 
-The main runtime targets reward-enabled Polymarket markets. The first
-implementation is deliberately monitor-only: it scans reward markets, ranks
-candidates, and produces dry-run BUY YES / BUY NO quote plans without posting
-live orders.
+The main runtime targets reward-enabled Polymarket markets. It defaults to
+monitor mode: it scans reward markets, ranks candidates, and produces dry-run
+BUY YES / BUY NO quote plans without posting live orders. Live execution is
+available only behind explicit `EXECUTION_MODE=live`, wallet credentials,
+market whitelisting, reconciliation, collateral, and inventory controls.
 
 ## Runtime Model
 
@@ -15,9 +16,13 @@ The worker runs every `BOT_TICK_MS` and produces a rewards dashboard snapshot:
 - Fetch YES/NO orderbook summaries when token IDs are available.
 - Rank markets by reward-per-capital adjusted for competition and risk tags.
 - Reject toxic or operationally unsafe markets before quote planning.
-- Produce dry-run two-sided BUY quote plans for eligible markets.
-- Keep live posting disabled until whitelist accounting and reconciliation are
-  implemented and tested.
+- Produce two-sided BUY quote plans for eligible markets.
+- In monitor mode, report the plans without posting.
+- In live mode, reconcile open orders, cancel stale managed orders, and post
+  only whitelisted quotes that pass collateral and inventory limits.
+- Persist managed orders, execution events, and inferred fill records under
+  `RUNTIME_STATE_PATH` so live mode can recover managed order state after a
+  process restart.
 
 ## Strategy Direction
 
@@ -73,6 +78,9 @@ REWARDS_MAX_OPEN_MARKETS=10
 REWARDS_MAX_MIDPOINT_DRIFT=0.015
 REWARDS_MAX_ORDER_AGE_SECONDS=60
 REWARDS_MAX_ORDERBOOK_AGE_SECONDS=5
+REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME=20
+REWARDS_MIN_COLLATERAL_BALANCE=5
+REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET=2
 REWARDS_LIVE_WHITELIST_ONLY=true
 REWARDS_WHITELIST_MARKET_IDS=
 REWARDS_BLOCKED_CATEGORIES=crypto,geopolitics
@@ -85,15 +93,30 @@ REWARDS_BLOCKED_KEYWORDS=5m,15m,live,in-play,missile,strike,war,attack,breaking
 - `POST /api/tick` runs one scanner tick.
 - `GET /api/status` returns runtime status.
 - `GET /api/config/current` returns the active rewards config.
+- `GET /api/execution` returns the latest live/monitor execution state.
 
 ## Safety Boundary
 
-Live CLOB posting is not part of the current main loop. The existing
-Polymarket adapter still supports order placement and cancellation, but the
-rewards runtime only plans quotes. The next live phase should add explicit
-market whitelisting, open-order reconciliation, fill accounting, fail-safe
-cancellation, inventory limits, and reward/PnL attribution before enabling
-real orders.
+Live CLOB posting is off by default. It requires:
+
+- `EXECUTION_MODE=live`.
+- `OWNER_PRIVATE_KEY` and `POLYMARKET_DEPOSIT_WALLET`.
+- A non-empty `REWARDS_WHITELIST_MARKET_IDS` list when
+  `REWARDS_LIVE_WHITELIST_ONLY=true`.
+- Passing collateral reserve, per-market active-order, inventory, age,
+  midpoint-drift, and orderbook-freshness checks.
+
+The execution service only cancels orders it posted and tracks in the current
+process or restored from `RUNTIME_STATE_PATH`. External/manual open orders on
+the same token cause the planner to skip posting a duplicate, but they are not
+cancelled.
+
+Managed order state, execution events, and fill records are persisted. Fill
+records are inferred from CLOB open-order `sizeMatched` deltas and terminal
+reconciliation when a previously managed order is no longer open. The dashboard
+shows filled size, cost basis, open managed buy size, and recent fills. Final
+resolution PnL and actual Polymarket reward attribution still require external
+settlement/reward data and are not treated as realized profit in this runtime.
 
 ## Docker
 

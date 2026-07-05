@@ -1,11 +1,12 @@
 import 'dotenv/config';
 import path from 'node:path';
 
-import type { RewardsRuntimeConfig } from '../../../packages/shared/src';
+import type { RewardsExecutionMode, RewardsRuntimeConfig } from '../../../packages/shared/src';
 
 export type RewardsAppConfig = {
   port: number;
   dashboardInternalApiKey?: string;
+  executionMode: RewardsExecutionMode;
   clobApiUrl: string;
   gammaApiUrl: string;
   dataApiUrl: string;
@@ -22,6 +23,7 @@ export function loadRewardsAppConfig(): RewardsAppConfig {
   return {
     port: Number(process.env.PORT || 8798),
     dashboardInternalApiKey: process.env.DASHBOARD_INTERNAL_API_KEY,
+    executionMode: executionModeEnv(process.env.EXECUTION_MODE),
     clobApiUrl: process.env.POLYMARKET_CLOB_API_URL || 'https://clob.polymarket.com',
     gammaApiUrl: process.env.POLYMARKET_GAMMA_API_URL || 'https://gamma-api.polymarket.com',
     dataApiUrl: process.env.POLYMARKET_DATA_API_URL || 'https://data-api.polymarket.com',
@@ -50,6 +52,9 @@ function loadRewardsRuntimeConfig(): RewardsRuntimeConfig {
     maxMidpointDrift: numberEnv('REWARDS_MAX_MIDPOINT_DRIFT', 0.015),
     maxOrderAgeSeconds: parsePositiveInteger(process.env.REWARDS_MAX_ORDER_AGE_SECONDS, 60),
     maxOrderbookAgeSeconds: numberEnv('REWARDS_MAX_ORDERBOOK_AGE_SECONDS', 5),
+    maxInventorySharesPerOutcome: numberEnv('REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME', 20),
+    minCollateralBalance: numberEnv('REWARDS_MIN_COLLATERAL_BALANCE', 5),
+    maxActiveOrdersPerMarket: parsePositiveInteger(process.env.REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET, 2),
     liveWhitelistOnly: booleanEnv('REWARDS_LIVE_WHITELIST_ONLY', true),
     whitelistedMarketIds: csvEnv('REWARDS_WHITELIST_MARKET_IDS'),
     blockedCategories: csvEnv('REWARDS_BLOCKED_CATEGORIES', ['crypto', 'geopolitics']),
@@ -65,6 +70,10 @@ function loadRewardsRuntimeConfig(): RewardsRuntimeConfig {
       'breaking',
     ]),
   };
+}
+
+function executionModeEnv(value: string | undefined): RewardsExecutionMode {
+  return value?.trim().toLowerCase() === 'live' ? 'live' : 'monitor';
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {

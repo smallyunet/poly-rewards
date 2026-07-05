@@ -1,11 +1,13 @@
 import { loadRewardsAppConfig } from './rewardsConfig';
+import { RewardsExecutionService } from './rewardsExecution';
 import { runRewardsTick } from './rewards';
 import { createServer } from './server';
 import { RewardsStore } from './rewardsStore';
 
 async function main() {
   const config = loadRewardsAppConfig();
-  const store = new RewardsStore(config.tickIntervalMs, { maxRecords: config.runtimeMaxRecords });
+  const store = new RewardsStore(config.tickIntervalMs, config.executionMode, { maxRecords: config.runtimeMaxRecords });
+  const execution = new RewardsExecutionService(config);
 
   let tickRunning = false;
   const tick = async (source: 'initial' | 'scheduled' | 'manual') => {
@@ -17,14 +19,28 @@ async function main() {
     try {
       const snapshot = await runRewardsTick(config);
       store.recordRewardsSnapshot(snapshot);
+      const executionState = await execution.reconcile(snapshot);
+      store.recordExecutionState(executionState);
       store.markRunningIfDegraded();
       store.recordRuntimeLog({
-        level: snapshot.diagnostics.some((item) => /failed|stale|blocked|error/i.test(item)) ? 'warn' : 'info',
+        level: snapshot.diagnostics.some((item) => /failed|stale|blocked|error/i.test(item)) || executionState.recentEvents.some((event) => event.level === 'error') ? 'warn' : 'info',
         source: 'worker',
         message: `${source} tick completed.`,
-        details: { marketsScanned: snapshot.marketsScanned, plannedOrders: snapshot.totals.plannedOrders, diagnostics: snapshot.diagnostics },
+        details: {
+          marketsScanned: snapshot.marketsScanned,
+          plannedOrders: snapshot.totals.plannedOrders,
+          execution: executionState.totals,
+          diagnostics: snapshot.diagnostics,
+        },
       });
-      console.log('[api] rewards tick', JSON.stringify({ source, updatedAt: snapshot.updatedAt, marketsScanned: snapshot.marketsScanned, candidates: snapshot.candidates.length, plannedOrders: snapshot.totals.plannedOrders }));
+      console.log('[api] rewards tick', JSON.stringify({
+        source,
+        updatedAt: snapshot.updatedAt,
+        marketsScanned: snapshot.marketsScanned,
+        candidates: snapshot.candidates.length,
+        plannedOrders: snapshot.totals.plannedOrders,
+        execution: executionState.totals,
+      }));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       store.markDegraded();

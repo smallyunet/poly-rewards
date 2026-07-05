@@ -4,14 +4,18 @@ Date: 2026-07-05
 
 ## Summary
 
-This repository is now a dedicated Polymarket rewards market-making scanner.
-The primary runtime does not run directional prediction logic. It scans
-reward-enabled markets, enriches them with CLOB market and orderbook data,
-ranks candidates, and produces monitor-only quote plans.
+This repository is now a dedicated Polymarket rewards market-making scanner
+with a guarded live execution path. The primary runtime does not run
+directional prediction logic. It scans reward-enabled markets, enriches them
+with CLOB market and orderbook data, ranks candidates, and produces quote
+plans. By default those plans remain monitor-only.
 
-The current live-order boundary is intentionally closed. The system plans
-quotes, explains eligibility, and surfaces risk controls, but it does not post
-orders from the main worker.
+The live-order boundary is explicit. The system posts only when
+`EXECUTION_MODE=live`, credentials are configured, whitelist rules pass, and
+the execution service clears reconciliation, collateral, active-order,
+inventory, age, midpoint-drift, and orderbook-freshness checks.
+Managed order state, execution events, and inferred fill records are persisted
+under `RUNTIME_STATE_PATH` for restart recovery.
 
 ## Strategy
 
@@ -51,18 +55,36 @@ The API worker uses a rewards-specific state model:
 
 ## Current Success Criteria
 
-Before any live order path is added:
+For scanner and planner operation:
 
 - Scanner lists reward markets and shows real market titles/categories.
 - Candidate ranking explains selected and rejected markets.
-- Quote plans are dry-run only.
+- Quote plans are dry-run in monitor mode.
 - Notional caps block oversize markets by default.
 - The dashboard shows risk controls and diagnostics.
 
-Before increasing scope:
+For guarded live operation:
 
-- Add persisted reward accounting.
-- Add open-order reconciliation for whitelisted markets.
-- Add fail-safe cancellation.
-- Add inventory and mark-to-market PnL.
-- Attribute liquidity rewards, maker rebates, spread capture, and final resolution PnL separately.
+- Require an explicit live mode and CLOB credentials.
+- Require market/condition whitelisting by default.
+- Reconcile open orders and avoid duplicate posting on tokens that already have
+  active external orders.
+- Cancel only managed orders from the current process when age, price drift, or
+  orderbook freshness triggers fire, including orders restored from persisted
+  execution state.
+- Enforce collateral reserve, per-market active-order caps, and per-outcome
+  inventory caps before posting.
+- Persist managed orders, execution events, and inferred fill records across
+  process restarts.
+- Surface filled size, cost basis, open managed buy size, recent fills, and
+  execution events in the dashboard.
+
+Before increasing size or relying on unattended operation:
+
+- Replace terminal fill inference with durable trade/fill facts if a stronger
+  CLOB trade-history source is wired in.
+- Add mark-to-market PnL from current orderbooks.
+- Distinguish externally cancelled/expired/filled orders beyond open-order
+  absence when CLOB terminal status data is available.
+- Attribute liquidity rewards, maker rebates, spread capture, and final
+  resolution PnL separately.

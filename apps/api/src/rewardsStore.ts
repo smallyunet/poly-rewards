@@ -1,4 +1,4 @@
-import type { RewardsAppState, RewardsDashboardState, RewardsRuntimeStatus, RuntimeLogRecord } from '../../../packages/shared/src';
+import type { RewardExecutionState, RewardsAppState, RewardsDashboardState, RewardsExecutionMode, RewardsRuntimeStatus, RuntimeLogRecord } from '../../../packages/shared/src';
 
 type RewardsStoreOptions = {
   maxRecords?: number;
@@ -7,15 +7,16 @@ type RewardsStoreOptions = {
 export class RewardsStore {
   private runtime: RewardsRuntimeStatus;
   private rewards?: RewardsDashboardState;
+  private execution?: RewardExecutionState;
   private runtimeLogs: RuntimeLogRecord[] = [];
   private readonly maxRecords: number;
 
-  constructor(private readonly tickIntervalMs: number, options: RewardsStoreOptions = {}) {
+  constructor(private readonly tickIntervalMs: number, executionMode: RewardsExecutionMode, options: RewardsStoreOptions = {}) {
     const startedAt = new Date();
     this.maxRecords = options.maxRecords ?? 1_000;
     this.runtime = {
       status: 'running',
-      executionMode: 'monitor',
+      executionMode,
       startedAt: startedAt.toISOString(),
       nextTickAt: new Date(startedAt.getTime() + tickIntervalMs).toISOString(),
       tickIntervalMs,
@@ -52,6 +53,10 @@ export class RewardsStore {
     };
   }
 
+  recordExecutionState(execution: RewardExecutionState): void {
+    this.execution = execution;
+  }
+
   recordRuntimeLog(log: Omit<RuntimeLogRecord, 'id' | 'createdAt'> & { createdAt?: string }): void {
     const createdAt = log.createdAt || new Date().toISOString();
     this.runtimeLogs = [{
@@ -65,6 +70,7 @@ export class RewardsStore {
     return {
       runtime: this.runtime,
       rewards: this.rewards,
+      execution: this.execution,
       runtimeLogs: this.runtimeLogs,
     };
   }

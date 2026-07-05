@@ -22,8 +22,9 @@ export function createServer(appConfig: RewardsAppConfig, store: RewardsStore, m
   });
 
   app.get('/api/status', (_req, res) => res.json(store.getRuntime()));
-  app.get('/api/config/current', (_req, res) => res.json({ rewards: appConfig.rewards, clobApiUrl: appConfig.clobApiUrl }));
+  app.get('/api/config/current', (_req, res) => res.json({ executionMode: appConfig.executionMode, rewards: appConfig.rewards, clobApiUrl: appConfig.clobApiUrl }));
   app.get('/api/rewards', (_req, res) => res.json(store.dashboardState().rewards || null));
+  app.get('/api/execution', (_req, res) => res.json(store.dashboardState().execution || null));
   app.get('/api/state', (_req, res, next) => {
     try {
       res.json(store.dashboardState());

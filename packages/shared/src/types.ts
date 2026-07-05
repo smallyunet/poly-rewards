@@ -9,6 +9,8 @@ export type RuntimeLogRecord = {
   details?: unknown;
 };
 
+export type RewardsExecutionMode = 'monitor' | 'live';
+
 export type RewardRiskTag =
   | 'good-reward'
   | 'low-competition'
@@ -106,15 +108,100 @@ export type RewardsRuntimeConfig = {
   maxMidpointDrift: number;
   maxOrderAgeSeconds: number;
   maxOrderbookAgeSeconds: number;
+  maxInventorySharesPerOutcome: number;
+  minCollateralBalance: number;
+  maxActiveOrdersPerMarket: number;
   liveWhitelistOnly: boolean;
   whitelistedMarketIds: string[];
   blockedCategories: string[];
   blockedKeywords: string[];
 };
 
+export type RewardManagedOrder = {
+  orderId: string;
+  planId: string;
+  marketId: string;
+  conditionId?: string;
+  tokenId: string;
+  label: 'YES' | 'NO';
+  side: 'BUY';
+  price: number;
+  size: number;
+  filledSize: number;
+  remainingSize: number | null;
+  notional: number;
+  status: 'posted' | 'open' | 'cancelled' | 'filled' | 'expired' | 'terminal' | 'unknown';
+  createdAt: string;
+  updatedAt: string;
+  lastCheckedAt?: string;
+  raw?: unknown;
+};
+
+export type RewardExecutionEvent = {
+  id: string;
+  createdAt: string;
+  level: 'info' | 'warn' | 'error';
+  action: 'skip' | 'post' | 'cancel' | 'reconcile' | 'error';
+  marketId?: string;
+  tokenId?: string;
+  orderId?: string;
+  message: string;
+  details?: unknown;
+};
+
+export type RewardFillRecord = {
+  id: string;
+  orderId: string;
+  marketId: string;
+  conditionId?: string;
+  tokenId: string;
+  label: 'YES' | 'NO';
+  side: 'BUY';
+  price: number;
+  size: number;
+  notional: number;
+  source: 'open_order_match' | 'terminal_reconcile';
+  createdAt: string;
+};
+
+export type RewardInventorySummary = {
+  tokenId: string;
+  label: 'YES' | 'NO';
+  marketId: string;
+  conditionId?: string;
+  filledSize: number;
+  openBuySize: number;
+  avgEntryPrice: number | null;
+  costBasis: number;
+};
+
+export type RewardExecutionState = {
+  mode: RewardsExecutionMode;
+  enabled: boolean;
+  updatedAt?: string;
+  dryRun: boolean;
+  collateralBalance?: number;
+  collateralAllowance?: number | null;
+  persistencePath?: string;
+  activeOrders: RewardManagedOrder[];
+  recentFills: RewardFillRecord[];
+  inventory: RewardInventorySummary[];
+  recentEvents: RewardExecutionEvent[];
+  totals: {
+    activeOrders: number;
+    activeNotional: number;
+    filledSize: number;
+    filledCostBasis: number;
+    postedThisTick: number;
+    cancelledThisTick: number;
+    skippedThisTick: number;
+    fillsThisTick: number;
+  };
+};
+
 export type RewardsRuntimeStatus = {
   status: 'running' | 'degraded';
-  executionMode: 'monitor';
+  executionMode: RewardsExecutionMode;
   startedAt: string;
   lastTickAt?: string;
   nextTickAt?: string;
@@ -146,5 +233,6 @@ export type RewardsDashboardState = {
 export type RewardsAppState = {
   runtime: RewardsRuntimeStatus;
   rewards?: RewardsDashboardState;
+  execution?: RewardExecutionState;
   runtimeLogs: RuntimeLogRecord[];
 };

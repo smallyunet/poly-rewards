@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, CheckCircle2, Clock, RefreshCw, Shield, TrendingUp } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Clock, RefreshCw, Shield, TrendingUp, Zap } from 'lucide-react';
 
-import type { RewardMarketCandidate, RewardQuotePlan, RewardsAppState, RuntimeLogRecord } from '../../../packages/shared/src';
+import type { RewardExecutionEvent, RewardFillRecord, RewardInventorySummary, RewardMarketCandidate, RewardQuotePlan, RewardsAppState, RuntimeLogRecord } from '../../../packages/shared/src';
 import { api, DASHBOARD_REFRESH_MS } from './lib/api';
 
 type LoadState =
@@ -55,6 +55,7 @@ export function App() {
 
   const eligibleQuotes = rewards.quotePlans.filter((plan) => plan.eligible);
   const topCandidates = rewards.candidates.slice(0, 8);
+  const execution = state.data.execution;
 
   return (
     <Shell>
@@ -62,7 +63,11 @@ export function App() {
         <div>
           <p className="eyebrow">Polymarket Rewards Market Making</p>
           <h1>Rewards Scanner</h1>
-          <p className="subtle">Monitor-only ranking and dry-run quote planning. Live posting is disabled in this runtime.</p>
+          <p className="subtle">
+            {execution?.mode === 'live'
+              ? 'Live execution is gated by whitelist, reconciliation, collateral, and inventory controls.'
+              : 'Monitor mode ranks markets and produces dry-run quote plans without posting live orders.'}
+          </p>
         </div>
         <button className="iconButton" onClick={manualTick} disabled={refreshing} title="Run scanner now">
           <RefreshCw size={18} className={refreshing ? 'spin' : ''} />
@@ -74,6 +79,7 @@ export function App() {
         <Metric icon={<Activity size={18} />} label="Scanned" value={String(rewards.marketsScanned)} detail={`${rewards.candidates.length} ranked`} />
         <Metric icon={<TrendingUp size={18} />} label="Planned" value={String(rewards.totals.plannedOrders)} detail={`${rewards.totals.plannedMarkets} markets`} tone={eligibleQuotes.length ? 'good' : 'neutral'} />
         <Metric icon={<Shield size={18} />} label="Notional" value={formatUsd(rewards.totals.plannedNotional)} detail={`cap ${formatUsd(rewards.config.maxGlobalNotional)}`} />
+        <Metric icon={<Zap size={18} />} label="Execution" value={execution?.mode || state.data.runtime.executionMode} detail={`${execution?.totals.activeOrders ?? 0} active orders`} tone={execution?.mode === 'live' ? 'good' : 'neutral'} />
         <Metric icon={<Clock size={18} />} label="Updated" value={formatTime(rewards.updatedAt)} detail={`every ${Math.round(state.data.runtime.tickIntervalMs / 1000)}s`} />
       </section>
 
@@ -90,8 +96,26 @@ export function App() {
         <Panel title="Risk Controls" subtitle="Current scanner and quote planner guardrails">
           <RiskControls state={state.data} />
         </Panel>
+        <Panel title="Execution" subtitle="Live order reconciliation and guarded posting state">
+          <ExecutionPanel state={state.data} />
+        </Panel>
+      </section>
+
+      <section className="contentGrid lower">
         <Panel title="Runtime Logs" subtitle="Worker and API events">
           <RuntimeLogs logs={state.data.runtimeLogs.slice(0, 8)} diagnostics={rewards.diagnostics} />
+        </Panel>
+        <Panel title="Execution Events" subtitle="Recent post, cancel, skip, and reconciliation decisions">
+          <ExecutionEvents events={execution?.recentEvents || []} />
+        </Panel>
+      </section>
+
+      <section className="contentGrid lower">
+        <Panel title="Inventory" subtitle="Filled exposure and open managed buy size by token">
+          <InventoryTable rows={execution?.inventory || []} />
+        </Panel>
+        <Panel title="Fills" subtitle="Recent matched or terminal-reconciled managed order fills">
+          <FillTable fills={execution?.recentFills || []} />
         </Panel>
       </section>
     </Shell>
@@ -209,6 +233,7 @@ function QuoteTable({ plans }: { plans: RewardQuotePlan[] }) {
 function RiskControls({ state }: { state: RewardsAppState }) {
   const config = state.rewards!.config;
   const rows = [
+    ['Execution mode', state.execution?.mode || state.runtime.executionMode],
     ['Global notional cap', formatUsd(config.maxGlobalNotional)],
     ['Per-market notional cap', formatUsd(config.maxMarketNotional)],
     ['Quote size', formatShares(config.quoteSize)],
@@ -216,6 +241,9 @@ function RiskControls({ state }: { state: RewardsAppState }) {
     ['Min daily reward', formatUsd(config.minDailyReward)],
     ['Min seconds to close', `${Math.round(config.minSecondsToClose / 3600)}h`],
     ['Max open markets', String(config.maxOpenMarkets)],
+    ['Max inventory / outcome', formatShares(config.maxInventorySharesPerOutcome)],
+    ['Collateral reserve', formatUsd(config.minCollateralBalance)],
+    ['Max active / market', String(config.maxActiveOrdersPerMarket)],
     ['Live whitelist only', config.liveWhitelistOnly ? 'yes' : 'no'],
   ];
   return (
@@ -224,6 +252,113 @@ function RiskControls({ state }: { state: RewardsAppState }) {
         <div className="controlRow" key={label}>
           <span>{label}</span>
           <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ExecutionPanel({ state }: { state: RewardsAppState }) {
+  const execution = state.execution;
+  if (!execution) return <EmptyState title="No execution state" detail="The worker has not recorded execution reconciliation yet." />;
+  const rows = [
+    ['Mode', execution.mode],
+    ['Dry run', execution.dryRun ? 'yes' : 'no'],
+    ['Active orders', String(execution.totals.activeOrders)],
+    ['Active notional', formatUsd(execution.totals.activeNotional)],
+    ['Filled size', formatShares(execution.totals.filledSize)],
+    ['Filled cost basis', formatUsd(execution.totals.filledCostBasis)],
+    ['Posted this tick', String(execution.totals.postedThisTick)],
+    ['Cancelled this tick', String(execution.totals.cancelledThisTick)],
+    ['Skipped this tick', String(execution.totals.skippedThisTick)],
+    ['Fills this tick', String(execution.totals.fillsThisTick)],
+    ['Collateral', execution.collateralBalance == null ? '-' : formatUsd(execution.collateralBalance)],
+  ];
+  return (
+    <div className="controlGrid">
+      {rows.map(([label, value]) => (
+        <div className="controlRow" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InventoryTable({ rows }: { rows: RewardInventorySummary[] }) {
+  if (!rows.length) return <EmptyState title="No inventory" detail="No managed order fills have been recorded yet." />;
+  return (
+    <div className="tableWrap compact">
+      <table>
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th>Outcome</th>
+            <th>Filled</th>
+            <th>Open Buy</th>
+            <th>Avg Entry</th>
+            <th>Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 12).map((row) => (
+            <tr key={row.tokenId}>
+              <td className="mono">{shortId(row.marketId)}</td>
+              <td><Badge tone={row.label === 'YES' ? 'good' : 'neutral'}>{row.label}</Badge></td>
+              <td className="mono">{formatShares(row.filledSize)}</td>
+              <td className="mono">{formatShares(row.openBuySize)}</td>
+              <td className="mono">{row.avgEntryPrice == null ? '-' : row.avgEntryPrice.toFixed(3)}</td>
+              <td className="mono">{formatUsd(row.costBasis)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FillTable({ fills }: { fills: RewardFillRecord[] }) {
+  if (!fills.length) return <EmptyState title="No fills" detail="No managed order match deltas or terminal reconciliations have been recorded." />;
+  return (
+    <div className="tableWrap compact">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Outcome</th>
+            <th>Price</th>
+            <th>Size</th>
+            <th>Cost</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {fills.slice(0, 12).map((fill) => (
+            <tr key={fill.id}>
+              <td className="mono">{formatTime(fill.createdAt)}</td>
+              <td><Badge tone={fill.label === 'YES' ? 'good' : 'neutral'}>{fill.label}</Badge></td>
+              <td className="mono">{fill.price.toFixed(3)}</td>
+              <td className="mono">{formatShares(fill.size)}</td>
+              <td className="mono">{formatUsd(fill.notional)}</td>
+              <td className="smallText">{fill.source}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ExecutionEvents({ events }: { events: RewardExecutionEvent[] }) {
+  if (!events.length) return <EmptyState title="No execution events" detail="Monitor mode does not post, cancel, or reconcile live orders." />;
+  return (
+    <div className="logList">
+      {events.slice(0, 10).map((event) => (
+        <div className={`logRow ${event.level}`} key={event.id}>
+          <AlertTriangle size={14} />
+          <span>{formatTime(event.createdAt)}</span>
+          <p>{event.message}</p>
         </div>
       ))}
     </div>
