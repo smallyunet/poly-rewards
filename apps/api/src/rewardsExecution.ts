@@ -66,14 +66,6 @@ export class RewardsExecutionService {
       return state;
     }
 
-    if (this.appConfig.rewards.liveWhitelistOnly && this.appConfig.rewards.whitelistedMarketIds.length === 0) {
-      this.event('warn', 'skip', 'Live execution is blocked because REWARDS_LIVE_WHITELIST_ONLY=true and no market IDs are whitelisted.');
-      counters.skippedThisTick += snapshot.quotePlans.filter((plan) => plan.eligible).length;
-      const state = this.state(now, counters, undefined, undefined);
-      this.persistState(now);
-      return state;
-    }
-
     try {
       const [openOrders, collateral] = await Promise.all([
         this.client.getOpenOrders(),
@@ -135,12 +127,6 @@ export class RewardsExecutionService {
     const activeManaged = () => Array.from(this.managedOrders.values()).filter(isActiveManagedOrder);
 
     for (const plan of snapshot.quotePlans.filter((item) => item.eligible)) {
-      if (!this.isWhitelisted(plan)) {
-        counters.skippedThisTick += 1;
-        this.event('warn', 'skip', `Skipped ${plan.label} quote because market is not whitelisted for live execution.`, planEventDetails(plan));
-        continue;
-      }
-
       if (availableCollateral - plan.notional < this.appConfig.rewards.minCollateralBalance) {
         counters.skippedThisTick += 1;
         this.event('warn', 'skip', `Skipped ${plan.label} quote because collateral would fall below the configured reserve.`, {
@@ -263,12 +249,6 @@ export class RewardsExecutionService {
       updatedAt: now,
       raw: result.raw,
     });
-  }
-
-  private isWhitelisted(plan: RewardQuotePlan): boolean {
-    if (!this.appConfig.rewards.liveWhitelistOnly) return true;
-    const whitelist = new Set(this.appConfig.rewards.whitelistedMarketIds);
-    return whitelist.has(plan.marketId) || Boolean(plan.conditionId && whitelist.has(plan.conditionId));
   }
 
   private hasExecutionCredentials(): boolean {

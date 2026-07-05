@@ -35,13 +35,12 @@ nano .env
 ```
 
 Keep the rewards runtime in monitor mode until scanner output, candidate
-ranking, quote plans, orderbook enrichment, and whitelist IDs have been
-reviewed:
+ranking, quote plans, orderbook enrichment, credentials, and risk caps have
+been reviewed:
 
 ```dotenv
 EXECUTION_MODE=monitor
 REWARDS_ENABLED=true
-REWARDS_LIVE_WHITELIST_ONLY=true
 REWARDS_GLOBAL_MAX_NOTIONAL=100
 REWARDS_MARKET_MAX_NOTIONAL=10
 ```

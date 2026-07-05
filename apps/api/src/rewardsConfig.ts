@@ -55,8 +55,6 @@ function loadRewardsRuntimeConfig(): RewardsRuntimeConfig {
     maxInventorySharesPerOutcome: numberEnv('REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME', 20),
     minCollateralBalance: numberEnv('REWARDS_MIN_COLLATERAL_BALANCE', 5),
     maxActiveOrdersPerMarket: parsePositiveInteger(process.env.REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET, 2),
-    liveWhitelistOnly: booleanEnv('REWARDS_LIVE_WHITELIST_ONLY', true),
-    whitelistedMarketIds: csvEnv('REWARDS_WHITELIST_MARKET_IDS'),
     blockedCategories: csvEnv('REWARDS_BLOCKED_CATEGORIES', ['crypto', 'geopolitics']),
     blockedKeywords: csvEnv('REWARDS_BLOCKED_KEYWORDS', [
       '5m',

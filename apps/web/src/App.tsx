@@ -65,7 +65,7 @@ export function App() {
           <h1>Rewards Scanner</h1>
           <p className="subtle">
             {execution?.mode === 'live'
-              ? 'Live execution is gated by whitelist, reconciliation, collateral, and inventory controls.'
+              ? 'Live execution is gated by reconciliation, collateral, inventory, and active-order controls.'
               : 'Monitor mode ranks markets and produces dry-run quote plans without posting live orders.'}
           </p>
         </div>
@@ -244,7 +244,6 @@ function RiskControls({ state }: { state: RewardsAppState }) {
     ['Max inventory / outcome', formatShares(config.maxInventorySharesPerOutcome)],
     ['Collateral reserve', formatUsd(config.minCollateralBalance)],
     ['Max active / market', String(config.maxActiveOrdersPerMarket)],
-    ['Live whitelist only', config.liveWhitelistOnly ? 'yes' : 'no'],
   ];
   return (
     <div className="controlGrid">

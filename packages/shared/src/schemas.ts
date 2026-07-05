@@ -17,8 +17,6 @@ export const rewardsRuntimeConfigSchema = z.object({
   maxInventorySharesPerOutcome: z.number().nonnegative(),
   minCollateralBalance: z.number().nonnegative(),
   maxActiveOrdersPerMarket: z.number().int().positive(),
-  liveWhitelistOnly: z.boolean(),
-  whitelistedMarketIds: z.array(z.string()),
   blockedCategories: z.array(z.string()),
   blockedKeywords: z.array(z.string()),
 });

@@ -32,12 +32,10 @@ Before exposing the deployed dashboard, check the remote `.env`:
 SITE_DOMAIN=:80
 HTTP_PORT=8098
 REWARDS_ENABLED=true
-REWARDS_LIVE_WHITELIST_ONLY=true
 ```
 
 In the non-conflicting server setup, the public-domain reverse proxy should
 target `http://127.0.0.1:8098`.
 
 The deployed runtime defaults to monitor mode. Live CLOB posting requires
-`EXECUTION_MODE=live`, wallet credentials, a reviewed whitelist, and execution
-risk caps.
+`EXECUTION_MODE=live`, wallet credentials, and execution risk caps.

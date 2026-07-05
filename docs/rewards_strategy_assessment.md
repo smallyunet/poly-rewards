@@ -11,9 +11,9 @@ with CLOB market and orderbook data, ranks candidates, and produces quote
 plans. By default those plans remain monitor-only.
 
 The live-order boundary is explicit. The system posts only when
-`EXECUTION_MODE=live`, credentials are configured, whitelist rules pass, and
-the execution service clears reconciliation, collateral, active-order,
-inventory, age, midpoint-drift, and orderbook-freshness checks.
+`EXECUTION_MODE=live`, credentials are configured, and the execution service
+clears reconciliation, collateral, active-order, inventory, age,
+midpoint-drift, and orderbook-freshness checks.
 Managed order state, execution events, and inferred fill records are persisted
 under `RUNTIME_STATE_PATH` for restart recovery.
 
@@ -66,7 +66,6 @@ For scanner and planner operation:
 For guarded live operation:
 
 - Require an explicit live mode and CLOB credentials.
-- Require market/condition whitelisting by default.
 - Reconcile open orders and avoid duplicate posting on tokens that already have
   active external orders.
 - Cancel only managed orders from the current process when age, price drift, or

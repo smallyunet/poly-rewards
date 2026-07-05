@@ -111,8 +111,6 @@ export type RewardsRuntimeConfig = {
   maxInventorySharesPerOutcome: number;
   minCollateralBalance: number;
   maxActiveOrdersPerMarket: number;
-  liveWhitelistOnly: boolean;
-  whitelistedMarketIds: string[];
   blockedCategories: string[];
   blockedKeywords: string[];
 };

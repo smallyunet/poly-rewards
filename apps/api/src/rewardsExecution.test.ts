@@ -22,31 +22,11 @@ test('monitor execution mode never calls live CLOB methods', async () => {
   assert.equal(client.calls.openOrders, 0);
 });
 
-test('live execution is blocked when whitelist mode has no whitelisted markets', async () => {
+test('live execution posts eligible quotes after reconciliation guards pass', async () => {
   const config = testConfig({
     executionMode: 'live',
     ownerPrivateKey: '0xabc',
     depositWallet: '0xwallet',
-    rewards: { whitelistedMarketIds: [], liveWhitelistOnly: true },
-  });
-  const client = fakeClient();
-  const execution = new RewardsExecutionService(config, client);
-
-  const state = await execution.reconcile(testSnapshot());
-
-  assert.equal(state.mode, 'live');
-  assert.equal(state.totals.postedThisTick, 0);
-  assert.equal(state.totals.skippedThisTick, 2);
-  assert.match(state.recentEvents[0].message, /no market IDs are whitelisted/);
-  assert.equal(client.calls.post, 0);
-});
-
-test('live execution posts whitelisted quotes after reconciliation guards pass', async () => {
-  const config = testConfig({
-    executionMode: 'live',
-    ownerPrivateKey: '0xabc',
-    depositWallet: '0xwallet',
-    rewards: { whitelistedMarketIds: ['market-1'], liveWhitelistOnly: true },
   });
   const client = fakeClient();
   const execution = new RewardsExecutionService(config, client);
@@ -66,7 +46,6 @@ test('live execution skips when an external open order already exists on a token
     executionMode: 'live',
     ownerPrivateKey: '0xabc',
     depositWallet: '0xwallet',
-    rewards: { whitelistedMarketIds: ['market-1'], liveWhitelistOnly: true },
   });
   const client = fakeClient({
     openOrders: [{
@@ -96,7 +75,6 @@ test('execution state persists and restores managed orders across service instan
     ownerPrivateKey: '0xabc',
     depositWallet: '0xwallet',
     runtimeStatePath,
-    rewards: { whitelistedMarketIds: ['market-1'], liveWhitelistOnly: true },
   });
   const firstClient = fakeClient();
   const first = new RewardsExecutionService(config, firstClient);
@@ -127,7 +105,6 @@ test('execution reconciliation records matched-size fill deltas', async () => {
     ownerPrivateKey: '0xabc',
     depositWallet: '0xwallet',
     runtimeStatePath,
-    rewards: { whitelistedMarketIds: ['market-1'], liveWhitelistOnly: true },
   });
   const first = new RewardsExecutionService(config, fakeClient());
   await first.reconcile(testSnapshot());

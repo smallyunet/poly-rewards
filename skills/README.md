@@ -10,4 +10,4 @@ and market-making dashboard.
 
 The default runtime is monitor mode. It ranks reward-enabled markets and plans
 dry-run quotes. Live CLOB posting requires `EXECUTION_MODE=live`, wallet
-credentials, whitelist IDs, and execution risk caps.
+credentials, and execution risk caps.

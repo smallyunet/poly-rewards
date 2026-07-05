@@ -6,7 +6,7 @@ The main runtime targets reward-enabled Polymarket markets. It defaults to
 monitor mode: it scans reward markets, ranks candidates, and produces dry-run
 BUY YES / BUY NO quote plans without posting live orders. Live execution is
 available only behind explicit `EXECUTION_MODE=live`, wallet credentials,
-market whitelisting, reconciliation, collateral, and inventory controls.
+reconciliation, collateral, inventory, and active-order controls.
 
 ## Runtime Model
 
@@ -19,7 +19,7 @@ The worker runs every `BOT_TICK_MS` and produces a rewards dashboard snapshot:
 - Produce two-sided BUY quote plans for eligible markets.
 - In monitor mode, report the plans without posting.
 - In live mode, reconcile open orders, cancel stale managed orders, and post
-  only whitelisted quotes that pass collateral and inventory limits.
+  only quotes that pass collateral and inventory limits.
 - Persist managed orders, execution events, and inferred fill records under
   `RUNTIME_STATE_PATH` so live mode can recover managed order state after a
   process restart.
@@ -81,8 +81,6 @@ REWARDS_MAX_ORDERBOOK_AGE_SECONDS=5
 REWARDS_MAX_INVENTORY_SHARES_PER_OUTCOME=20
 REWARDS_MIN_COLLATERAL_BALANCE=5
 REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET=2
-REWARDS_LIVE_WHITELIST_ONLY=true
-REWARDS_WHITELIST_MARKET_IDS=
 REWARDS_BLOCKED_CATEGORIES=crypto,geopolitics
 REWARDS_BLOCKED_KEYWORDS=5m,15m,live,in-play,missile,strike,war,attack,breaking
 ```
@@ -101,8 +99,6 @@ Live CLOB posting is off by default. It requires:
 
 - `EXECUTION_MODE=live`.
 - `OWNER_PRIVATE_KEY` and `POLYMARKET_DEPOSIT_WALLET`.
-- A non-empty `REWARDS_WHITELIST_MARKET_IDS` list when
-  `REWARDS_LIVE_WHITELIST_ONLY=true`.
 - Passing collateral reserve, per-market active-order, inventory, age,
   midpoint-drift, and orderbook-freshness checks.
 
