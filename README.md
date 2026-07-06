@@ -95,8 +95,9 @@ REWARDS_MAX_QUEUE_SHARE=0.25
 REWARDS_MIN_SIDE_DEPTH_MULTIPLIER=4
 REWARDS_MIN_ASK_DEPTH_MULTIPLIER=1
 REWARDS_INVENTORY_EXIT_ENABLED=true
-REWARDS_MAX_UNHEDGED_INVENTORY_AGE_SECONDS=600
 REWARDS_MAX_INVENTORY_LOSS_PER_SHARE=0.05
+REWARDS_INVENTORY_EXIT_SECONDS_TO_CLOSE=3600
+REWARDS_MAX_EXTREME_INVENTORY_LOSS_PER_SHARE=0.20
 REWARDS_MIN_INVENTORY_EXIT_SHARES=1
 REWARDS_MIN_COLLATERAL_BALANCE=5
 REWARDS_MAX_ACTIVE_ORDERS_PER_MARKET=2
@@ -126,9 +127,17 @@ open, it is treated as the covered side and the worker only posts the missing
 side. If a newly posted bundle fails halfway through, the worker cancels the
 newly posted side to avoid leaving a single-sided order.
 
-Inventory exits are enabled by default. Unhedged filled inventory is sold at the
-current best bid after `REWARDS_MAX_UNHEDGED_INVENTORY_AGE_SECONDS`, or sooner
-when the per-share loss reaches `REWARDS_MAX_INVENTORY_LOSS_PER_SHARE`.
+Inventory exits are enabled by default, but ordinary exits are restricted to
+markets that are close to resolution. If one side fills and the current best
+bid is not below the average entry price, the worker immediately posts a SELL
+exit to flatten that single-leg inventory before loss-control exits are
+considered. Once any inventory exit SELL order is recorded for a market, the
+worker stops posting new BUY quotes for that market. Otherwise, unhedged filled
+inventory is sold at the current best bid only when the market is within
+`REWARDS_INVENTORY_EXIT_SECONDS_TO_CLOSE` and the per-share loss reaches
+`REWARDS_MAX_INVENTORY_LOSS_PER_SHARE`. A separate
+`REWARDS_MAX_EXTREME_INVENTORY_LOSS_PER_SHARE` guard can exit immediately even
+before the close window.
 
 ## API
 

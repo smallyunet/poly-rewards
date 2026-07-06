@@ -177,9 +177,9 @@ export class RewardsExecutionService {
     const bundles = groupEligiblePlansByMarket(snapshot.quotePlans);
 
     for (const bundle of bundles) {
-      if (activeManaged().some((order) => order.marketId === bundle.marketId && order.side === 'SELL')) {
+      if (hasInventoryExitRecord(this.managedOrders, bundle.marketId)) {
         counters.skippedThisTick += bundle.plans.filter((plan) => plan.eligible).length;
-        this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because an inventory exit SELL order is active.`, {
+        this.event('warn', 'skip', `Skipped market ${shortId(bundle.marketId)} because an inventory exit SELL order was already recorded.`, {
           marketId: bundle.marketId,
           conditionId: bundle.conditionId,
         });
@@ -369,9 +369,12 @@ export class RewardsExecutionService {
       }
 
       const lossPerShare = row.avgEntryPrice == null ? 0 : Math.max(row.avgEntryPrice - exitPrice, 0);
-      const timedOut = ageSeconds >= this.appConfig.rewards.maxUnhedgedInventoryAgeSeconds;
-      const stopLoss = lossPerShare >= this.appConfig.rewards.maxInventoryLossPerShare;
-      if (!timedOut && !stopLoss) continue;
+      const profitableExit = row.avgEntryPrice != null && exitPrice >= row.avgEntryPrice;
+      const secondsToClose = marketSecondsToClose(snapshot, row.marketId);
+      const nearClose = secondsToClose != null && secondsToClose <= this.appConfig.rewards.inventoryExitSecondsToClose;
+      const stopLoss = nearClose && lossPerShare >= this.appConfig.rewards.maxInventoryLossPerShare;
+      const extremeStopLoss = lossPerShare >= this.appConfig.rewards.maxExtremeInventoryLossPerShare;
+      if (!profitableExit && !stopLoss && !extremeStopLoss) continue;
 
       const availableShares = await this.client.getAvailableShares(row.tokenId);
       const exitSize = floorShares(Math.min(unhedgedSize, availableShares));
@@ -387,7 +390,14 @@ export class RewardsExecutionService {
         continue;
       }
 
-      const intent = exitIntent(row, exitPrice, exitSize, now, timedOut ? 'unhedged inventory timeout' : 'inventory stop loss');
+      const exitReason = profitableExit ? 'break-even inventory take profit' : extremeStopLoss ? 'extreme inventory stop loss' : 'near-close inventory stop loss';
+      const resultReason = profitableExit
+        ? `best bid ${exitPrice.toFixed(3)} was not below average entry ${row.avgEntryPrice?.toFixed(3)}`
+        : extremeStopLoss
+          ? `loss ${lossPerShare.toFixed(3)} exceeded extreme max ${this.appConfig.rewards.maxExtremeInventoryLossPerShare.toFixed(3)}`
+          : `loss ${lossPerShare.toFixed(3)} exceeded max ${this.appConfig.rewards.maxInventoryLossPerShare.toFixed(3)} near market close`;
+
+      const intent = exitIntent(row, exitPrice, exitSize, now, exitReason);
       const result = await this.client.executeRewardLimitIntent(intent, { execute: true, orderType: 'GTC' });
       if (!result.ok || !result.orderId) {
         counters.skippedThisTick += 1;
@@ -406,7 +416,7 @@ export class RewardsExecutionService {
       this.recordPostedOrderFromIntent(intent, result, now);
       openOrders.push(toOpenOrderSummaryFromIntent(intent, result));
       counters.postedThisTick += 1;
-      this.event('warn', 'post', `Posted ${row.label} SELL exit at ${exitPrice.toFixed(3)} for ${formatShares(exitSize)} shares because ${timedOut ? `inventory was unhedged for ${Math.round(ageSeconds)}s` : `loss ${lossPerShare.toFixed(3)} exceeded max ${this.appConfig.rewards.maxInventoryLossPerShare.toFixed(3)}`}.`, {
+      this.event('warn', 'post', `Posted ${row.label} SELL exit at ${exitPrice.toFixed(3)} for ${formatShares(exitSize)} shares because ${resultReason}.`, {
         marketId: row.marketId,
         conditionId: row.conditionId,
         tokenId: row.tokenId,
@@ -416,7 +426,10 @@ export class RewardsExecutionService {
         exitSize,
         avgEntryPrice: row.avgEntryPrice,
         lossPerShare,
+        profitableExit,
         ageSeconds,
+        secondsToClose,
+        nearClose,
       });
     }
   }
@@ -743,6 +756,14 @@ function exitIntent(row: RewardInventorySummary, price: number, shares: number, 
   };
 }
 
+function marketSecondsToClose(snapshot: RewardsDashboardState, marketId: string): number | null {
+  const endDate = snapshot.candidates.find((candidate) => candidate.id === marketId)?.endDate;
+  if (!endDate) return null;
+  const timestamp = new Date(endDate).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, (timestamp - Date.now()) / 1000);
+}
+
 function orderbooksByToken(snapshot: RewardsDashboardState): Map<string, { bestBid: number | null; bestAsk: number | null }> {
   const books = new Map<string, { bestBid: number | null; bestAsk: number | null }>();
   for (const market of snapshot.candidates) {
@@ -777,6 +798,13 @@ function normalizeOrderStatus(status: string): RewardManagedOrder['status'] {
 
 function isActiveManagedOrder(order: RewardManagedOrder): boolean {
   return order.status === 'posted' || order.status === 'open' || order.status === 'unknown';
+}
+
+function hasInventoryExitRecord(orders: Map<string, RewardManagedOrder>, marketId: string): boolean {
+  for (const order of orders.values()) {
+    if (order.marketId === marketId && order.side === 'SELL') return true;
+  }
+  return false;
 }
 
 function planEventDetails(plan: RewardQuotePlan): { marketId: string; conditionId?: string; tokenId: string; orderId?: string; label: string; price: number; size: number; notional: number } {

@@ -226,7 +226,45 @@ test('live execution treats filled inventory as one side of the market bundle', 
   assert.deepEqual(client.posted.map((intent) => `${intent.side}:${intent.label}`), ['BUY:NO']);
 });
 
-test('live execution posts SELL exit for stale unhedged inventory', async () => {
+test('live execution stops quoting a market after any inventory exit record', async () => {
+  const runtimeStatePath = tempStatePath();
+  const now = new Date().toISOString();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'filled-sell',
+      planId: 'market-1:YES:SELL:test',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'SELL',
+      price: 0.49,
+      size: 5,
+      filledSize: 5,
+      remainingSize: 0,
+      notional: 2.45,
+      status: 'filled',
+      createdAt: now,
+      updatedAt: now,
+    }],
+  });
+  const client = fakeClient();
+  const execution = new RewardsExecutionService(config, client);
+
+  const state = await execution.reconcile(testSnapshot());
+
+  assert.equal(state.totals.postedThisTick, 0);
+  assert.equal(client.calls.post, 0);
+  assert.match(skipEventMessage(state, 'inventory exit SELL order was already recorded'), /already recorded/);
+});
+
+test('live execution posts SELL exit for inventory stop loss near close', async () => {
   const runtimeStatePath = tempStatePath();
   const old = new Date(Date.now() - 60_000).toISOString();
   const config = testConfig({
@@ -235,8 +273,7 @@ test('live execution posts SELL exit for stale unhedged inventory', async () => 
     depositWallet: '0xwallet',
     runtimeStatePath,
     rewards: {
-      maxUnhedgedInventoryAgeSeconds: 1,
-      maxInventoryLossPerShare: 1,
+      maxInventoryLossPerShare: 0.001,
       minInventoryExitShares: 1,
     },
   });
@@ -275,13 +312,200 @@ test('live execution posts SELL exit for stale unhedged inventory', async () => 
   });
   const client = fakeClient({ inventory: 5 });
   const execution = new RewardsExecutionService(config, client);
+  const snapshot = testSnapshot();
+  snapshot.candidates[0].endDate = new Date(Date.now() + 30_000).toISOString();
+  snapshot.candidates[0].yesOrderbook = { ...snapshot.candidates[0].yesOrderbook!, bestBid: 0.48 };
 
-  const state = await execution.reconcile(testSnapshot());
+  const state = await execution.reconcile(snapshot);
 
   assert.equal(state.totals.postedThisTick, 1);
   assert.equal(state.activeOrders[0].side, 'SELL');
-  assert.deepEqual(client.posted.map((intent) => `${intent.side}:${intent.label}:${intent.limitPrice}`), ['SELL:YES:0.49']);
-  assert.match(state.recentEvents.find((event) => event.message.includes('SELL exit'))?.message || '', /SELL exit/);
+  assert.deepEqual(client.posted.map((intent) => `${intent.side}:${intent.label}:${intent.limitPrice}`), ['SELL:YES:0.48']);
+  assert.match(state.recentEvents.find((event) => event.message.includes('SELL exit'))?.message || '', /near market close/);
+});
+
+test('live execution keeps losing unhedged inventory when market is not near close', async () => {
+  const runtimeStatePath = tempStatePath();
+  const old = new Date(Date.now() - 60_000).toISOString();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxInventoryLossPerShare: 0.001,
+      inventoryExitSecondsToClose: 60,
+      minInventoryExitShares: 1,
+    },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'filled-yes',
+      planId: 'filled-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 5,
+      remainingSize: 0,
+      notional: 2.43,
+      status: 'filled',
+      createdAt: old,
+      updatedAt: old,
+    }],
+    fills: [{
+      id: 'fill-yes',
+      orderId: 'filled-yes',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      notional: 2.43,
+      source: 'terminal_reconcile',
+      createdAt: old,
+    }],
+  });
+  const client = fakeClient({ inventory: 5 });
+  const execution = new RewardsExecutionService(config, client);
+  const snapshot = testSnapshot();
+  snapshot.quotePlans = [];
+  snapshot.candidates[0].endDate = new Date(Date.now() + 3_600_000).toISOString();
+  snapshot.candidates[0].yesOrderbook = { ...snapshot.candidates[0].yesOrderbook!, bestBid: 0.48 };
+
+  const state = await execution.reconcile(snapshot);
+
+  assert.equal(state.totals.postedThisTick, 0);
+  assert.equal(client.calls.shares, 0);
+  assert.equal(client.calls.post, 0);
+});
+
+test('live execution posts SELL exit for unhedged inventory when bid is not below entry', async () => {
+  const runtimeStatePath = tempStatePath();
+  const now = new Date().toISOString();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      inventoryExitSecondsToClose: 60,
+      maxExtremeInventoryLossPerShare: 1,
+      minInventoryExitShares: 1,
+    },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'filled-yes',
+      planId: 'filled-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 5,
+      remainingSize: 0,
+      notional: 2.43,
+      status: 'filled',
+      createdAt: now,
+      updatedAt: now,
+    }],
+    fills: [{
+      id: 'fill-yes',
+      orderId: 'filled-yes',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      notional: 2.43,
+      source: 'terminal_reconcile',
+      createdAt: now,
+    }],
+  });
+  const client = fakeClient({ inventory: 5 });
+  const execution = new RewardsExecutionService(config, client);
+  const snapshot = testSnapshot();
+  snapshot.quotePlans = [];
+  snapshot.candidates[0].endDate = new Date(Date.now() + 3_600_000).toISOString();
+  snapshot.candidates[0].yesOrderbook = { ...snapshot.candidates[0].yesOrderbook!, bestBid: 0.49 };
+
+  const state = await execution.reconcile(snapshot);
+
+  assert.equal(state.totals.postedThisTick, 1);
+  assert.deepEqual(client.posted.map((intent) => `${intent.side}:${intent.label}:${intent.limitPrice}:${intent.reason}`), ['SELL:YES:0.49:break-even inventory take profit']);
+  assert.match(state.recentEvents.find((event) => event.message.includes('SELL exit'))?.message || '', /not below average entry/);
+});
+
+test('live execution posts SELL exit for extreme inventory loss before close window', async () => {
+  const runtimeStatePath = tempStatePath();
+  const now = new Date().toISOString();
+  const config = testConfig({
+    executionMode: 'live',
+    ownerPrivateKey: '0xabc',
+    depositWallet: '0xwallet',
+    runtimeStatePath,
+    rewards: {
+      maxInventoryLossPerShare: 1,
+      inventoryExitSecondsToClose: 60,
+      maxExtremeInventoryLossPerShare: 0.2,
+      minInventoryExitShares: 1,
+    },
+  });
+  writeExecutionState(runtimeStatePath, {
+    managedOrders: [{
+      orderId: 'filled-yes',
+      planId: 'filled-yes-plan',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      filledSize: 5,
+      remainingSize: 0,
+      notional: 2.43,
+      status: 'filled',
+      createdAt: now,
+      updatedAt: now,
+    }],
+    fills: [{
+      id: 'fill-yes',
+      orderId: 'filled-yes',
+      marketId: 'market-1',
+      conditionId: 'condition-1',
+      tokenId: 'yes-token',
+      label: 'YES',
+      side: 'BUY',
+      price: 0.485,
+      size: 5,
+      notional: 2.43,
+      source: 'terminal_reconcile',
+      createdAt: now,
+    }],
+  });
+  const client = fakeClient({ inventory: 5 });
+  const execution = new RewardsExecutionService(config, client);
+  const snapshot = testSnapshot();
+  snapshot.quotePlans = [];
+  snapshot.candidates[0].endDate = new Date(Date.now() + 3_600_000).toISOString();
+  snapshot.candidates[0].yesOrderbook = { ...snapshot.candidates[0].yesOrderbook!, bestBid: 0.2 };
+
+  const state = await execution.reconcile(snapshot);
+
+  assert.equal(state.totals.postedThisTick, 1);
+  assert.deepEqual(client.posted.map((intent) => `${intent.side}:${intent.label}:${intent.limitPrice}:${intent.reason}`), ['SELL:YES:0.2:extreme inventory stop loss']);
+  assert.match(state.recentEvents.find((event) => event.message.includes('SELL exit'))?.message || '', /extreme max/);
 });
 
 test('live execution floors SELL exit size to avoid exceeding wallet share balance', async () => {
@@ -293,8 +517,7 @@ test('live execution floors SELL exit size to avoid exceeding wallet share balan
     depositWallet: '0xwallet',
     runtimeStatePath,
     rewards: {
-      maxUnhedgedInventoryAgeSeconds: 1,
-      maxInventoryLossPerShare: 1,
+      maxInventoryLossPerShare: 0.001,
       minInventoryExitShares: 1,
     },
   });
@@ -333,8 +556,10 @@ test('live execution floors SELL exit size to avoid exceeding wallet share balan
   });
   const client = fakeClient({ inventory: 4.999 });
   const execution = new RewardsExecutionService(config, client);
+  const snapshot = testSnapshot();
+  snapshot.candidates[0].endDate = new Date(Date.now() + 30_000).toISOString();
 
-  await execution.reconcile(testSnapshot());
+  await execution.reconcile(snapshot);
 
   assert.equal(client.posted[0].shares, 4.99);
 });

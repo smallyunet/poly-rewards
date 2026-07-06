@@ -113,8 +113,9 @@ export type RewardsRuntimeConfig = {
   minSideDepthMultiplier: number;
   minAskDepthMultiplier: number;
   inventoryExitEnabled: boolean;
-  maxUnhedgedInventoryAgeSeconds: number;
   maxInventoryLossPerShare: number;
+  inventoryExitSecondsToClose: number;
+  maxExtremeInventoryLossPerShare: number;
   minInventoryExitShares: number;
   minCollateralBalance: number;
   maxActiveOrdersPerMarket: number;
